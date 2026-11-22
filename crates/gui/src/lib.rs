@@ -1,6 +1,6 @@
 //! GPUI frontend. The evaluator lives on a separate logic thread.
 use gpui::*;
-use remacs_runtime::frontend::{FrameVisibility, QuitRequest};
+use remacs_runtime::frontend::{FontSelection, FrameVisibility, QuitRequest};
 use std::collections::{HashMap, HashSet};
 use std::io;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -1455,7 +1455,7 @@ pub fn run_gui_with_dump(
                     #[cfg(target_os = "macos")]
                     GuiRequest::FontSelection {
                         frame_id,
-                        current_font,
+                        current,
                         reply,
                     } => {
                         let activate_frame = windows.contains_key(&frame_id);
@@ -1466,12 +1466,11 @@ pub fn run_gui_with_dump(
                             .or(primary_window);
                         let result = if let Some(handle) = handle {
                             handle
-                                .update(cx, move |_view, window, _cx| {
-                                    show_native_font_panel(
-                                        window,
-                                        &current_font,
-                                        activate_frame,
-                                    )
+                                .update(cx, move |view, window, _cx| {
+                                    let mut current = current;
+                                    current.family =
+                                        view::font_family(window, Some(current.family.clone()));
+                                    show_native_font_panel(window, &current, activate_frame)
                                 })
                                 .map_err(|error| error.to_string())
                                 .and_then(|result| result)
@@ -3250,7 +3249,7 @@ fn show_native_color_panel(window: Option<&Window>) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-static FONT_PANEL_RESULT: Mutex<Option<Option<String>>> = Mutex::new(None);
+static FONT_PANEL_RESULT: Mutex<Option<Option<FontSelection>>> = Mutex::new(None);
 #[cfg(target_os = "macos")]
 static FONT_PANEL_RESPONDER_CLASS: OnceLock<usize> = OnceLock::new();
 
@@ -3299,21 +3298,54 @@ extern "C" fn font_panel_change_font(_this: &Object, _cmd: Sel, sender: id) {
                 None
             } else {
                 let bytes = NSString::UTF8String(family);
-                (!bytes.is_null()).then(|| CStr::from_ptr(bytes).to_string_lossy().into_owned())
+                (!bytes.is_null()).then(|| {
+                    let traits: usize = msg_send![sender, traitsOfFont: converted];
+                    let native_weight: isize = msg_send![sender, weightOfFont: converted];
+                    let weight = if traits & 0x2 != 0 {
+                        700
+                    } else {
+                        match native_weight {
+                            ..=1 => 100,
+                            2 => 200,
+                            3 => 300,
+                            4..=5 => 400,
+                            6 => 500,
+                            7 => 600,
+                            8 => 700,
+                            9 => 800,
+                            _ => 900,
+                        }
+                    };
+                    let slant = if traits & 0x1 != 0 {
+                        "italic"
+                    } else {
+                        "normal"
+                    };
+                    let width = if traits & 0x10 != 0 {
+                        "narrow"
+                    } else if traits & 0x40 != 0 {
+                        "condensed"
+                    } else if traits & 0x20 != 0 {
+                        "expanded"
+                    } else {
+                        "normal"
+                    };
+                    let size: f64 = msg_send![converted, pointSize];
+                    FontSelection {
+                        family: CStr::from_ptr(bytes).to_string_lossy().into_owned(),
+                        size,
+                        weight,
+                        slant: slant.to_owned(),
+                        width: width.to_owned(),
+                    }
+                })
             }
         }
     };
     let mut selection = FONT_PANEL_RESULT
         .lock()
         .unwrap_or_else(|error| error.into_inner());
-    if selection.is_none() {
-        *selection = Some(result);
-    }
-    drop(selection);
-    unsafe {
-        let app: id = msg_send![class!(NSApplication), sharedApplication];
-        let _: () = msg_send![app, stopModalWithCode: 1_isize];
-    }
+    *selection = Some(result);
 }
 
 #[cfg(target_os = "macos")]
@@ -3334,9 +3366,9 @@ extern "C" fn font_panel_window_will_close(_this: &Object, _cmd: Sel, _notificat
 #[cfg(target_os = "macos")]
 fn show_native_font_panel(
     window: &Window,
-    current_font: &str,
+    current: &FontSelection,
     activate_frame: bool,
-) -> Result<Option<String>, String> {
+) -> Result<Option<FontSelection>, String> {
     // The modal AppKit loop keeps the native Font panel responsive while the
     // logic thread waits for x-select-font to return.
     let native_window = appkit_native_window(window)
@@ -3352,9 +3384,37 @@ fn show_native_font_panel(
     }
 
     let font_name: id =
-        unsafe { msg_send![NSString::alloc(nil).init_str(current_font), autorelease] };
-    let initial_font: id =
-        unsafe { msg_send![class!(NSFont), fontWithName: font_name size: 14.0_f64] };
+        unsafe { msg_send![NSString::alloc(nil).init_str(&current.family), autorelease] };
+    let traits = (if current.slant == "italic" || current.slant == "oblique" {
+        0x1usize
+    } else {
+        0
+    }) | (if current.weight >= 700 { 0x2usize } else { 0 })
+        | match current.width.as_str() {
+            "narrow" => 0x10usize,
+            "expanded" => 0x20usize,
+            "condensed" => 0x40usize,
+            _ => 0,
+        };
+    let panel_weight: isize = match current.weight {
+        0..=200 => 1,
+        201..=300 => 3,
+        301..=400 => 5,
+        401..=500 => 6,
+        501..=600 => 7,
+        601..=700 => 9,
+        701..=800 => 11,
+        _ => 13,
+    };
+    let initial_font: id = unsafe {
+        msg_send![
+            manager,
+            fontWithFamily: font_name
+            traits: traits
+            weight: panel_weight
+            size: current.size
+        ]
+    };
     if initial_font != nil {
         unsafe {
             let _: () = msg_send![manager, setSelectedFont: initial_font isMultiple: NO];

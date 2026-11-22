@@ -186,8 +186,21 @@ pub trait FileDialogBackend {
 /// Host font chooser used by graphical font-selection primitives. The
 /// implementation may block the logic thread until the user selects or
 /// dismisses the native chooser.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontSelection {
+    pub family: String,
+    pub size: f64,
+    pub weight: u16,
+    pub slant: String,
+    pub width: String,
+}
+
 pub trait FontSelectionBackend {
-    fn select_font(&self, frame_id: usize, current_font: &str) -> Result<Option<String>, String>;
+    fn select_font(
+        &self,
+        frame_id: usize,
+        current: FontSelection,
+    ) -> Result<Option<FontSelection>, String>;
 }
 
 /// Resolved face attributes for the character passed to `font-at`.

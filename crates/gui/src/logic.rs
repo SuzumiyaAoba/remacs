@@ -1,7 +1,8 @@
 //! Logic thread and channel-backed implementation of the common input protocol.
 use remacs_runtime::{
     frontend::{
-        AppleScriptResult, ClipboardInfo, DragAction, FrameFontMetrics, FrameVisibility, Grid,
+        AppleScriptResult, ClipboardInfo, DragAction, FontSelection, FrameFontMetrics,
+        FrameVisibility, Grid,
         GridImageSource,
         GridScrollBarOrientation, InputEvent, KeyIo, MouseArea, MouseButton, MouseInput,
         MousePosition, MouseWheelDirection, NativeMenuCommandId, QuitRequest,
@@ -754,8 +755,8 @@ pub(super) enum GuiRequest {
     #[cfg(target_os = "macos")]
     FontSelection {
         frame_id: usize,
-        current_font: String,
-        reply: SyncSender<Result<Option<String>, String>>,
+        current: FontSelection,
+        reply: SyncSender<Result<Option<FontSelection>, String>>,
     },
     AboutPanel {
         frame_id: usize,
@@ -1560,12 +1561,16 @@ struct GuiFontSelectionBackend {
 
 #[cfg(target_os = "macos")]
 impl remacs_runtime::frontend::FontSelectionBackend for GuiFontSelectionBackend {
-    fn select_font(&self, frame_id: usize, current_font: &str) -> Result<Option<String>, String> {
+    fn select_font(
+        &self,
+        frame_id: usize,
+        current: FontSelection,
+    ) -> Result<Option<FontSelection>, String> {
         let (reply, response) = mpsc::sync_channel(1);
         self.requests
             .send_blocking(GuiRequest::FontSelection {
                 frame_id,
-                current_font: current_font.to_owned(),
+                current,
                 reply,
             })
             .map_err(|_| "GUI font panel service is unavailable".to_owned())?;

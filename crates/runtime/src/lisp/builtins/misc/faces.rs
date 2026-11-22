@@ -121,7 +121,36 @@ pub(super) fn f_window_font_height(i: &mut Interp, a: crate::lisp::Argv) -> Eval
     window_font_metric(i, a, false)
 }
 
-/// `x-select-font' — decode FRAME before requiring the graphical font panel.
+fn selected_face_attribute(
+    i: &mut Interp,
+    frame: &Value,
+    attribute: &str,
+) -> Result<Value, Flow> {
+    let function = Value::Sym(i.q("internal-get-lisp-face-attribute"));
+    let face = Value::Sym(i.q("default"));
+    let attribute = Value::Sym(i.q(attribute));
+    i.apply(&function, vec![face, attribute, frame.clone()])
+}
+
+fn selected_font_weight(i: &Interp, value: &Value) -> u16 {
+    let weight = match value {
+        Value::Int(weight) => *weight,
+        Value::Sym(symbol) => match i.symbol_name(*symbol).as_str() {
+            "thin" => 100,
+            "ultra-light" | "extra-light" => 200,
+            "light" => 300,
+            "semi-light" | "book" | "normal" | "regular" => 400,
+            "medium" => 500,
+            "semi-bold" | "demi-bold" | "bold" => 700,
+            "extra-bold" | "ultra-bold" | "black" | "heavy" => 900,
+            _ => 400,
+        },
+        _ => 400,
+    };
+    weight.clamp(100, 900) as u16
+}
+
+/// Select a font for FRAME using the graphical font panel.
 pub(super) fn f_select_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let frame = crate::editor::frame_live(i, &arg(&a, 0))?;
     if !crate::editor::frame_is_graphical(i, &frame) {
@@ -130,7 +159,16 @@ pub(super) fn f_select_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
     let Some(backend) = i.font_selection_backend.clone() else {
         return Err(i.error("Window system frame should be used"));
     };
-    let current_font = i
+    let frame_value = Value::Frame(frame.clone());
+    let family = match selected_face_attribute(i, &frame_value, ":family")? {
+        Value::Str(family) => {
+            let family = family.borrow().to_unicode_lossy();
+            (!family.is_empty() && family != "default" && family != "unspecified")
+                .then_some(family)
+        }
+        _ => None,
+    };
+    let frame_font = i
         .q_soft("font")
         .map(|font| crate::lisp::eval::plist_get(&frame.borrow().params, font))
         .and_then(|value| match value {
@@ -139,10 +177,71 @@ pub(super) fn f_select_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
                 (name != "tty").then_some(name)
             }
             _ => None,
-        })
-        .unwrap_or_else(|| "Menlo".to_owned());
-    match backend.select_font(frame.borrow().id, &current_font) {
-        Ok(Some(font)) => Ok(Value::string(font)),
+        });
+    let family = family.or(frame_font).unwrap_or_else(|| "Menlo".to_owned());
+    let size = match selected_face_attribute(i, &frame_value, ":height")? {
+        Value::Int(height) if *height > 1 => *height as f64 / 10.0,
+        _ => 14.0,
+    };
+    let weight_attribute = selected_face_attribute(i, &frame_value, ":weight")?;
+    let weight = selected_font_weight(i, &weight_attribute);
+    let slant = match selected_face_attribute(i, &frame_value, ":slant")? {
+        Value::Sym(slant) => match i.symbol_name(slant).as_str() {
+            "italic" | "reverse-italic" => "italic",
+            "oblique" | "reverse-oblique" => "oblique",
+            _ => "normal",
+        },
+        _ => "normal",
+    }
+    .to_owned();
+    let width = match selected_face_attribute(i, &frame_value, ":width")? {
+        Value::Sym(width) => {
+            let width = i.symbol_name(width).to_string();
+            if matches!(
+                width.as_str(),
+                "ultra-condensed"
+                    | "extra-condensed"
+                    | "condensed"
+                    | "semi-condensed"
+                    | "narrow"
+                    | "normal"
+                    | "regular"
+                    | "medium"
+                    | "semi-expanded"
+                    | "expanded"
+                    | "extra-expanded"
+                    | "ultra-expanded"
+            ) {
+                width
+            } else {
+                "normal".to_owned()
+            }
+        }
+        _ => "normal".to_owned(),
+    };
+    let current = crate::frontend::FontSelection {
+        family,
+        size,
+        weight,
+        slant,
+        width,
+    };
+    match backend.select_font(frame.borrow().id, current) {
+        Ok(Some(font)) => {
+            let args = vec![
+                Value::Sym(i.q(":family")),
+                Value::string(font.family),
+                Value::Sym(i.q(":size")),
+                Value::float(font.size),
+                Value::Sym(i.q(":weight")),
+                Value::Int(font.weight as i128),
+                Value::Sym(i.q(":slant")),
+                Value::Sym(i.q(&font.slant)),
+                Value::Sym(i.q(":width")),
+                Value::Sym(i.q(&font.width)),
+            ];
+            f_font_spec(i, args.into())
+        }
         Ok(None) => Ok(Value::Nil),
         Err(error) => Err(i.error(format!("Font selection failed: {error}"))),
     }
