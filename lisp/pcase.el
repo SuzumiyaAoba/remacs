@@ -858,14 +858,13 @@ A and B can be one of:
   (let (test)
     (cond
      ((and (equal upat pat)
-           ;; For predicates like (pred (> a)), two such predicates may
-           ;; actually refer to different variables `a'.
-           (or (and (eq 'pred (car upat)) (symbolp (cadr upat)))
-               ;; FIXME: `vars' gives us the environment in which `upat' will
-               ;; run, but we don't have the environment in which `pat' will
-               ;; run, so we can't do a reliable verification.  But let's try
-               ;; and catch at least the easy cases such as (bug#14773).
-               (not (macroexp--fgrep vars (cadr upat)))))
+           ;; Repeated predicate calls may have side effects or depend on
+           ;; dynamic state.  Only consider a named predicate stable when it
+           ;; is explicitly declared pure and side-effect-free.
+           (eq 'pred (car-safe upat))
+           (symbolp (cadr upat))
+           (get (cadr upat) 'pure)
+           (get (cadr upat) 'side-effect-free))
       '(:pcase--succeed . :pcase--fail))
      ;; In case PAT is of the form (pred (not PRED))
      ((and (eq 'pred (car-safe pat)) (eq 'not (car-safe (cadr pat))))
