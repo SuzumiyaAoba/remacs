@@ -4868,6 +4868,23 @@ initializing CC Mode.  Currently (2020-06) these are `js-mode' and
 
 ;; Tools for scanning identifiers and other tokens.
 
+(defun c--on-c++-operator-identifier (position)
+  "Return the start of the overloaded C++ operator name at POSITION."
+  (when (and c-opt-op-identifier-prefix
+             c-overloadable-operators-regexp)
+    (save-excursion
+      (let ((limit (c-determine-limit 500)))
+        (when (re-search-backward c-opt-op-identifier-prefix limit t)
+          (let ((start (point))
+                (prefix-end (match-end 0)))
+            (unless (c-in-literal nil t)
+              (goto-char prefix-end)
+              (c-forward-syntactic-ws limit)
+              (and (looking-at c-overloadable-operators-regexp)
+                   (<= start position)
+                   (<= position (match-end 0))
+                   start)))))))
+
 (defun c-on-identifier ()
   "Return non-nil if the point is on or directly after an identifier.
 Keywords are recognized and not considered identifiers.  If an
@@ -4877,8 +4894,6 @@ happen in Pike) then the point for the preceding one is returned.
 
 Note that this function might do hidden buffer changes.  See the
 comment at the start of cc-engine.el for more info."
-
-  ;; FIXME: Shouldn't this function handle "operator" in C++?
 
   (save-excursion
     (skip-syntax-backward "w_")
@@ -4901,6 +4916,8 @@ comment at the start of cc-engine.el for more info."
 	      (looking-at c-symbol-key)
 	      (>= (match-end 0) pos)
 	      (point))))
+
+     (c--on-c++-operator-identifier (point))
 
      ;; Handle the "operator +" syntax in C++.
      (when (and c-overloadable-operators-regexp
