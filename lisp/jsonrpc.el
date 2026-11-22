@@ -610,6 +610,11 @@ CONNECTION, METHOD and PARAMS as in `jsonrpc-async-request' (which see)."
     :initform nil
     :accessor jsonrpc--expected-bytes
     :documentation "How many bytes declared by server.")
+   (-stderr-buffer
+    :initarg :stderr-buffer
+    :initform nil
+    :accessor jsonrpc-stderr-buffer
+    :documentation "Buffer receiving the process's standard error.")
    (-on-shutdown
     :accessor jsonrpc--on-shutdown
     :initform #'ignore
@@ -630,31 +635,32 @@ understand JSONRPC messages with basic HTTP-style enveloping
 headers such as \"Content-Length:\".
 
 :ON-SHUTDOWN (optional), a function of one argument, the
-connection object, called when the process dies.")
+connection object, called when the process dies.
+
+:STDERR-BUFFER (optional), a buffer or buffer name for the process's
+standard error.  If :PROCESS is a factory function, it can get the
+forwarding buffer with `jsonrpc-stderr-buffer' before creating the process.")
 
 (cl-defmethod initialize-instance :after ((conn jsonrpc-process-connection) slots)
   (cl-destructuring-bind (&key ((:process proc)) name &allow-other-keys) slots
-    ;; FIXME: notice the undocumented bad coupling in the stderr
-    ;; buffer name, it must be named exactly like this we expect when
-    ;; calling `make-process'.  If there were a `set-process-stderr'
-    ;; like there is `set-process-buffer' we wouldn't need this and
-    ;; could use a pipe with a process filter instead of
-    ;; `after-change-functions'.  Alternatively, we need a new initarg
-    ;; (but maybe not a slot).
     (let* ((stderr-buffer-name (format "*%s stderr*" name))
-           (stderr-buffer (jsonrpc--forwarding-buffer stderr-buffer-name "[stderr] " conn))
+           (provided-stderr-buffer (jsonrpc-stderr-buffer conn))
+           (stderr-buffer
+            (jsonrpc--forwarding-buffer
+             (or provided-stderr-buffer stderr-buffer-name) "[stderr] " conn))
            (hidden-name (concat " " stderr-buffer-name)))
-      ;; If we are correctly coupled to the client, the process now
-      ;; created should pick up the `stderr-buffer' just created, which
-      ;; we immediately rename
+      ;; Make the forwarding buffer available through the public accessor
+      ;; before invoking a process factory.
+      (setf (jsonrpc-stderr-buffer conn) stderr-buffer)
       (setq proc (if (functionp proc)
                      (if (zerop (cdr (func-arity proc)))
                          (funcall proc)
                        (funcall proc conn))
                    proc))
       (with-current-buffer stderr-buffer
-        (ignore-errors (kill-buffer hidden-name))
-        (rename-buffer hidden-name)
+        (unless provided-stderr-buffer
+          (ignore-errors (kill-buffer hidden-name))
+          (rename-buffer hidden-name))
         (setq buffer-read-only t))
       (process-put proc 'jsonrpc-stderr stderr-buffer))
     (setf (jsonrpc--process conn) proc)
@@ -734,10 +740,6 @@ and delete the network process."
     (when cleanup
       (kill-buffer (process-buffer (jsonrpc--process conn)))
       (kill-buffer (jsonrpc-stderr-buffer conn)))))
-
-(defun jsonrpc-stderr-buffer (conn)
-  "Get CONN's standard error buffer, if any."
-  (process-get (jsonrpc--process conn) 'jsonrpc-stderr))
 
 
 ;;; Private stuff
@@ -1202,11 +1204,11 @@ of the API instead.")
             (insert-before-markers msg))
           (jsonrpc--limit-buffer-size max))))))
 
-(defun jsonrpc--forwarding-buffer (name prefix conn)
+(defun jsonrpc--forwarding-buffer (buffer-or-name prefix conn)
   "Helper for `jsonrpc-process-connection' helpers.
-Make a stderr buffer named NAME, forwarding lines prefixed by
+Prepare a stderr buffer BUFFER-OR-NAME, forwarding lines prefixed by
 PREFIX to CONN's events buffer."
-  (with-current-buffer (get-buffer-create name)
+  (with-current-buffer (get-buffer-create buffer-or-name)
     (let ((inhibit-read-only t))
       (fundamental-mode)
       (erase-buffer)
