@@ -3222,6 +3222,41 @@ system TYPE.")
        (not (equal ange-ftp-binary-file-name-regexp ""))
        (string-match-p ange-ftp-binary-file-name-regexp file)))
 
+(defun ange-ftp--check-written-file-name (filename)
+  "Check that the remote server stored FILENAME under its requested name.
+If the refreshed directory listing shows a different name, warn the user."
+  (let* ((directory (file-name-as-directory (file-name-directory filename)))
+         (requested (file-name-nondirectory filename))
+         files)
+    ;; Do not trust the entry added optimistically by the previous write.
+    (setq ange-ftp-ls-cache-file nil)
+    (remhash directory ange-ftp-files-hashtable)
+    (setq files
+          (condition-case nil
+              (ange-ftp-get-files directory t)
+            (error nil)))
+    (when (and files
+               (not (ange-ftp-hash-entry-exists-p requested files)))
+      (let ((folded-requested (downcase requested))
+            similar)
+        (maphash
+         (lambda (name _)
+           (let ((folded-name (downcase name)))
+             (when (or (equal folded-name folded-requested)
+                       (and (< (length folded-name)
+                               (length folded-requested))
+                            (string-prefix-p folded-name folded-requested)))
+               (push name similar))))
+         files)
+        (display-warning
+         'ange-ftp
+         (if (= (length similar) 1)
+             (format "FTP server stored %s as %s in %s"
+                     requested (car similar) directory)
+           (format "FTP server did not list %s under its requested name in %s"
+                   requested directory))
+         :warning)))))
+
 (defun ange-ftp-write-region
     (start end filename &optional append visit _lockname mustbenew)
   (setq filename (expand-file-name filename))
@@ -3280,6 +3315,8 @@ system TYPE.")
 	    (ange-ftp-del-tmp-name temp)
 	    (if binary
 		(ange-ftp-set-ascii-mode host user)))
+          (ange-ftp-message "Wrote %s" abbr)
+          (ange-ftp--check-written-file-name filename)
 	  (if (eq visit t)
 	      (progn
 		(set-visited-file-modtime (ange-ftp-file-modtime filename))
@@ -3287,9 +3324,7 @@ system TYPE.")
 		(setq buffer-file-name filename)
 		(set-buffer-modified-p nil)))
 	  ;; ensure `last-coding-system-used' has an appropriate value
-	  (setq last-coding-system-used coding-system-used)
-	  (ange-ftp-message "Wrote %s" abbr)
-	  (ange-ftp-add-file-entry filename))
+	  (setq last-coding-system-used coding-system-used))
       (ange-ftp-real-write-region start end filename append visit))))
 
 (defun ange-ftp-insert-file-contents (filename &optional visit beg end replace)
