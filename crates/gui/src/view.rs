@@ -14,7 +14,8 @@ use gpui::*;
 use remacs_runtime::frontend::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, FontAtStyle, FontGlyphKey, FrameFontMetrics,
     Grid, GridBidiDirection, GridCursor, GridImage, GridImageConversion, GridImageSizeLimit,
-    GridImageSource, GridMenu, GridMenuItem,
+    GridImageSource, GridMenu, GridMenuItem, GUI_DEFAULT_BACKGROUND_RGB,
+    GUI_DEFAULT_FOREGROUND_RGB,
     GridPointerShape, GridScrollBar, GridScrollBarOrientation, GridStipple, GridTooltipPosition,
     GridVScroll, GridWindowRowHeights, MouseArea, MouseButton as RemacsMouseButton, MouseInput,
     MousePosition,
@@ -138,8 +139,8 @@ mod tooltip_position_tests;
 use input::TextInputState;
 
 // Colors (Tomorrow Night-ish, matching typical Emacs themes).
-const FG: u32 = 0xc5c8c6;
-const BG: u32 = 0x1d1f21;
+const FG: u32 = GUI_DEFAULT_FOREGROUND_RGB;
+const BG: u32 = GUI_DEFAULT_BACKGROUND_RGB;
 const CURSOR: u32 = 0xc5c8c6;
 
 const FONT_SIZE: f32 = 14.0;

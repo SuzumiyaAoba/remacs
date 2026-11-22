@@ -23,6 +23,12 @@ use unicode_width::UnicodeWidthChar;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct CellColor(pub u8, pub u8, pub u8);
 
+/// Default GUI colors used when a frame does not specify face colors.
+pub const GUI_DEFAULT_FOREGROUND_RGB: u32 = 0xc5c8c6;
+pub const GUI_DEFAULT_BACKGROUND_RGB: u32 = 0x1d1f21;
+pub const GUI_DEFAULT_FOREGROUND: CellColor = CellColor(0xc5, 0xc8, 0xc6);
+pub const GUI_DEFAULT_BACKGROUND: CellColor = CellColor(0x1d, 0x1f, 0x21);
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum BoxStyleKind {
     #[default]
@@ -11616,15 +11622,21 @@ fn gamma_correct_style(style: &mut CellStyle, exponent: f64) {
     }
 }
 
-fn resolve_grid_style(style: &mut CellStyle, exponent: Option<f64>, threshold: i128) {
+fn resolve_grid_style(
+    style: &mut CellStyle,
+    exponent: Option<f64>,
+    threshold: i128,
+    default_foreground: Option<CellColor>,
+    default_background: Option<CellColor>,
+) {
     if let Some(exponent) = exponent {
         gamma_correct_style(style, exponent);
     }
     if let Some(distant_foreground) = style.distant_foreground.take() {
         let (foreground, background) = if style.inverse {
-            (style.bg, style.fg)
+            (style.bg.or(default_background), style.fg.or(default_foreground))
         } else {
-            (style.fg, style.bg)
+            (style.fg.or(default_foreground), style.bg.or(default_background))
         };
         if threshold > 0
             && let (Some(foreground), Some(background)) = (foreground, background)
@@ -11639,9 +11651,33 @@ fn resolve_grid_style(style: &mut CellStyle, exponent: Option<f64>, threshold: i
     }
 }
 
-fn resolve_grid_colors(grid: &mut Grid, exponent: Option<f64>, threshold: i128) {
-    resolve_grid_style(&mut grid.default_style, exponent, threshold);
-    resolve_grid_style(&mut grid.internal_border_style, exponent, threshold);
+fn resolve_grid_colors(grid: &mut Grid, exponent: Option<f64>, threshold: i128, graphical: bool) {
+    let correct_default = |color: CellColor| {
+        exponent.map_or(color, |exponent| gamma_correct_color(color, exponent))
+    };
+    let default_foreground = grid
+        .default_style
+        .fg
+        .or_else(|| graphical.then_some(GUI_DEFAULT_FOREGROUND))
+        .map(correct_default);
+    let default_background = grid
+        .default_bg
+        .or_else(|| graphical.then_some(GUI_DEFAULT_BACKGROUND))
+        .map(correct_default);
+    resolve_grid_style(
+        &mut grid.default_style,
+        exponent,
+        threshold,
+        default_foreground,
+        default_background,
+    );
+    resolve_grid_style(
+        &mut grid.internal_border_style,
+        exponent,
+        threshold,
+        default_foreground,
+        default_background,
+    );
     if let Some(color) = &mut grid.default_bg {
         if let Some(exponent) = exponent {
             *color = gamma_correct_color(*color, exponent);
@@ -11649,35 +11685,107 @@ fn resolve_grid_colors(grid: &mut Grid, exponent: Option<f64>, threshold: i128) 
     }
     for row in &mut grid.attrs {
         for style in row {
-            resolve_grid_style(style, exponent, threshold);
+            resolve_grid_style(
+                style,
+                exponent,
+                threshold,
+                default_foreground,
+                default_background,
+            );
         }
     }
     for row in &mut grid.char_attrs {
         for style in row {
-            resolve_grid_style(style, exponent, threshold);
+            resolve_grid_style(
+                style,
+                exponent,
+                threshold,
+                default_foreground,
+                default_background,
+            );
         }
     }
     for indicator in &mut grid.fill_column_indicators {
-        resolve_grid_style(&mut indicator.style, exponent, threshold);
+        resolve_grid_style(
+            &mut indicator.style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
     }
     for bar in &mut grid.scroll_bars {
-        resolve_grid_style(&mut bar.style, exponent, threshold);
+        resolve_grid_style(
+            &mut bar.style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
     }
     for bitmap in &mut grid.fringe_bitmaps {
-        resolve_grid_style(&mut bitmap.style, exponent, threshold);
+        resolve_grid_style(
+            &mut bitmap.style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
     }
     for divider in &mut grid.bottom_dividers {
-        resolve_grid_style(&mut divider.style, exponent, threshold);
-        resolve_grid_style(&mut divider.first_pixel_style, exponent, threshold);
-        resolve_grid_style(&mut divider.last_pixel_style, exponent, threshold);
+        resolve_grid_style(
+            &mut divider.style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
+        resolve_grid_style(
+            &mut divider.first_pixel_style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
+        resolve_grid_style(
+            &mut divider.last_pixel_style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
     }
     for divider in &mut grid.right_dividers {
-        resolve_grid_style(&mut divider.style, exponent, threshold);
-        resolve_grid_style(&mut divider.first_pixel_style, exponent, threshold);
-        resolve_grid_style(&mut divider.last_pixel_style, exponent, threshold);
+        resolve_grid_style(
+            &mut divider.style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
+        resolve_grid_style(
+            &mut divider.first_pixel_style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
+        resolve_grid_style(
+            &mut divider.last_pixel_style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
     }
     for composition in &mut grid.compositions {
-        resolve_grid_style(&mut composition.style, exponent, threshold);
+        resolve_grid_style(
+            &mut composition.style,
+            exponent,
+            threshold,
+            default_foreground,
+            default_background,
+        );
     }
     for cursor in &mut grid.cursors {
         if let Some(color) = &mut cursor.color {
@@ -15170,7 +15278,12 @@ fn render_grid_internal(
         mouse_color,
         input,
     };
-    resolve_grid_colors(&mut grid, gamma_exponent, face_near_same_color_threshold(i));
+    resolve_grid_colors(
+        &mut grid,
+        gamma_exponent,
+        face_near_same_color_threshold(i),
+        graphical,
+    );
     grid
 }
 
