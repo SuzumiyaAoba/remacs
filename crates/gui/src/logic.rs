@@ -601,6 +601,9 @@ pub(super) struct FrameSnapshot {
     pub shaded: bool,
     pub min_width: Option<usize>,
     pub min_height: Option<usize>,
+    pub drag_with_header_line: bool,
+    pub drag_with_mode_line: bool,
+    pub drag_internal_border: bool,
     pub grid: Grid,
 }
 
@@ -670,6 +673,9 @@ fn frame_snapshot(
         shaded: frame_parameter_value(i, frame, "shaded").truthy(),
         min_width: frame_minimum(i, frame, "min-width"),
         min_height: frame_minimum(i, frame, "min-height"),
+        drag_with_header_line: frame_parameter_value(i, frame, "drag-with-header-line").truthy(),
+        drag_with_mode_line: frame_parameter_value(i, frame, "drag-with-mode-line").truthy(),
+        drag_internal_border: frame_parameter_value(i, frame, "drag-internal-border").truthy(),
         grid,
     }
 }

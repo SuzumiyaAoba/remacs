@@ -753,6 +753,11 @@ pub fn run_gui_with_dump(
                             );
                             let fullscreen = snapshot.fullscreen.clone();
                             let frame_size = (snapshot.width, snapshot.height);
+                            let frame_drag_parameters = (
+                                snapshot.drag_with_header_line,
+                                snapshot.drag_with_mode_line,
+                                snapshot.drag_internal_border,
+                            );
                             let frame_width_size = snapshot.width_size;
                             let frame_height_size = snapshot.height_size;
                             let frame_left = snapshot.left;
@@ -822,6 +827,11 @@ pub fn run_gui_with_dump(
                                     view.set_image_cache_metrics(
                                         image_cache_entries,
                                         image_cache_size,
+                                    );
+                                    view.set_frame_drag_parameters(
+                                        frame_drag_parameters.0,
+                                        frame_drag_parameters.1,
+                                        frame_drag_parameters.2,
                                     );
                                     if skip_taskbar_changed {
                                         update_native_skip_taskbar(window, skip_taskbar);
@@ -948,6 +958,11 @@ pub fn run_gui_with_dump(
                                         initial_image_cache_entries,
                                         initial_image_cache_size,
                                     );
+                                    view.set_frame_drag_parameters(
+                                        frame_drag_parameters.0,
+                                        frame_drag_parameters.1,
+                                        frame_drag_parameters.2,
+                                    );
                                     view.set_grid(grid, window);
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
@@ -1072,6 +1087,11 @@ pub fn run_gui_with_dump(
                                         no_accept_focus,
                                     );
                                     view.set_minimum_cells(minimum_cells.0, minimum_cells.1);
+                                    view.set_frame_drag_parameters(
+                                        frame_drag_parameters.0,
+                                        frame_drag_parameters.1,
+                                        frame_drag_parameters.2,
+                                    );
                                     view.set_modifier_mapping(modifier_mapping);
                                     view.set_alpha_background(alpha_background);
                                     view.set_appearance(window_appearance);
@@ -2171,8 +2191,8 @@ fn frame_window_options(
         // Apply mapping focus after installing the native focus/behavior hooks.
         focus: false,
         show: frame.visibility == FrameVisibility::Visible,
-        is_movable: !child,
-        is_resizable: !child,
+        is_movable: !child || frame.drag_with_header_line || frame.drag_with_mode_line,
+        is_resizable: !child || frame.drag_internal_border,
         is_minimizable: !child,
         ..Default::default()
     }

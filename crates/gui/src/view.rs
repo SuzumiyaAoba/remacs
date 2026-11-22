@@ -954,6 +954,33 @@ struct TabBarDrag {
     dragged: bool,
 }
 
+#[derive(Clone, Copy)]
+struct FrameResizeEdges {
+    left: bool,
+    right: bool,
+    top: bool,
+    bottom: bool,
+}
+
+#[derive(Clone, Copy)]
+enum FrameDragKind {
+    Move,
+    Resize(FrameResizeEdges),
+}
+
+#[derive(Clone, Copy)]
+struct FrameDrag {
+    kind: FrameDragKind,
+    start_mouse: Point<Pixels>,
+    start_bounds: Bounds<Pixels>,
+    start_viewport: Size<Pixels>,
+    display_id: Option<u32>,
+    down_position: Option<MousePosition>,
+    click_count: usize,
+    modifiers: i128,
+    dragged: bool,
+}
+
 fn scroll_bar_axis(bar: &GridScrollBar, point: Point<Pixels>) -> f32 {
     let coordinate = match bar.orientation {
         GridScrollBarOrientation::Vertical => point.y,
@@ -980,6 +1007,26 @@ fn frame_content_point(
         return None;
     }
     Some(point(px(x - border), px(y - border)))
+}
+
+fn frame_resize_edges(
+    position: Point<Pixels>,
+    viewport: Size<Pixels>,
+    border_width: usize,
+) -> Option<FrameResizeEdges> {
+    if border_width == 0 {
+        return None;
+    }
+    let border = border_width as f32;
+    let x = f32::from(position.x);
+    let y = f32::from(position.y);
+    let edges = FrameResizeEdges {
+        left: x < border,
+        right: x >= f32::from(viewport.width) - border,
+        top: y < border,
+        bottom: y >= f32::from(viewport.height) - border,
+    };
+    (edges.left || edges.right || edges.top || edges.bottom).then_some(edges)
 }
 
 fn device_pixels(value: Pixels, scale_factor: f32) -> i128 {
@@ -1733,6 +1780,10 @@ pub(super) struct EditorView {
     sent_font_metrics_frame_id: Option<usize>,
     scroll_bar_drag: Option<ScrollBarDrag>,
     tab_bar_drag: Option<TabBarDrag>,
+    frame_drag: Option<FrameDrag>,
+    drag_with_header_line: bool,
+    drag_with_mode_line: bool,
+    drag_internal_border: bool,
     follow_tooltip_drag: bool,
     mouse_down_positions: HashMap<MouseButton, MousePosition>,
     mouse_position_poll_started: bool,
@@ -1920,6 +1971,10 @@ impl EditorView {
             sent_font_metrics_frame_id: None,
             scroll_bar_drag: None,
             tab_bar_drag: None,
+            frame_drag: None,
+            drag_with_header_line: false,
+            drag_with_mode_line: false,
+            drag_internal_border: false,
             follow_tooltip_drag: false,
             mouse_down_positions: HashMap::new(),
             mouse_position_poll_started: false,
@@ -2202,6 +2257,109 @@ impl EditorView {
     pub(super) fn set_frame_behavior(&self, auto_raise: bool, auto_lower: bool) {
         self.auto_raise.set(auto_raise);
         self.auto_lower.set(auto_lower);
+    }
+
+    pub(super) fn set_frame_drag_parameters(
+        &mut self,
+        drag_with_header_line: bool,
+        drag_with_mode_line: bool,
+        drag_internal_border: bool,
+    ) {
+        self.drag_with_header_line = drag_with_header_line;
+        self.drag_with_mode_line = drag_with_mode_line;
+        self.drag_internal_border = drag_internal_border;
+    }
+
+    fn frame_drag_kind_for_position(&self, position: &MousePosition) -> Option<FrameDragKind> {
+        let window_id = position.window_id?;
+        match position.area? {
+            MouseArea::HeaderLine
+                if self.drag_with_header_line
+                    && self
+                        .grid
+                        .header_lines
+                        .iter()
+                        .map(|line| line.row)
+                        .min()
+                        .is_some_and(|top_row| {
+                            self.grid.header_lines.iter().any(|line| {
+                                line.row == top_row && line.window_id == window_id
+                            })
+                        }) =>
+            {
+                Some(FrameDragKind::Move)
+            }
+            MouseArea::ModeLine
+                if self.drag_with_mode_line
+                    && self
+                        .grid
+                        .mode_lines
+                        .iter()
+                        .map(|line| line.row)
+                        .max()
+                        .is_some_and(|bottom_row| {
+                            self.grid.mode_lines.iter().any(|line| {
+                                line.row == bottom_row && line.window_id == window_id
+                            })
+                        }) =>
+            {
+                Some(FrameDragKind::Move)
+            }
+            _ => None,
+        }
+    }
+
+    fn apply_frame_drag(&mut self, window: &mut Window, drag: FrameDrag, position: Point<Pixels>) {
+        let delta_x = f32::from(position.x - drag.start_mouse.x);
+        let delta_y = f32::from(position.y - drag.start_mouse.y);
+        match drag.kind {
+            FrameDragKind::Move => {
+                window.set_position(
+                    drag.start_bounds.origin + point(px(delta_x), px(delta_y)),
+                    drag.display_id,
+                );
+            }
+            FrameDragKind::Resize(edges) => {
+                let minimum = self.update_minimum_size(window, self.cell_width, self.line_height);
+                let old_width = f32::from(drag.start_viewport.width);
+                let old_height = f32::from(drag.start_viewport.height);
+                let width = if edges.left {
+                    (old_width - delta_x).max(f32::from(minimum.width))
+                } else if edges.right {
+                    (old_width + delta_x).max(f32::from(minimum.width))
+                } else {
+                    old_width
+                };
+                let height = if edges.top {
+                    (old_height - delta_y).max(f32::from(minimum.height))
+                } else if edges.bottom {
+                    (old_height + delta_y).max(f32::from(minimum.height))
+                } else {
+                    old_height
+                };
+                let size = size(px(width), px(height));
+                let origin = point(
+                    drag.start_bounds.origin.x
+                        + if edges.left {
+                            px(old_width - width)
+                        } else {
+                            px(0.0)
+                        },
+                    drag.start_bounds.origin.y
+                        + if edges.top {
+                            px(old_height - height)
+                        } else {
+                            px(0.0)
+                        },
+                );
+                if origin != drag.start_bounds.origin {
+                    window.set_position(origin, drag.display_id);
+                }
+                if size != drag.start_viewport {
+                    window.resize(size);
+                }
+            }
+        }
     }
 
     pub(super) fn current_mouse_absolute_pixel_position(
@@ -2842,12 +3000,8 @@ impl Render for EditorView {
                     this.mouse_down_positions.remove(&MouseButton::Left);
                     this.pressed_button = None;
                     this.tab_bar_drag = None;
+                    this.frame_drag = None;
                     this.consumed_mouse_buttons.remove(&MouseButton::Left);
-                    let Some(point) =
-                        frame_content_point(event.position, window.viewport_size(), border)
-                    else {
-                        return;
-                    };
                     let absolute_position = absolute_mouse_pixel_position(
                         event.position,
                         pointer_screen_left,
@@ -2855,6 +3009,41 @@ impl Render for EditorView {
                         content_top_offset,
                     );
                     let _ = this.tx.send_mouse_move(None, Some(absolute_position));
+                    let resize_edges = if this.drag_internal_border {
+                        frame_resize_edges(
+                            event.position,
+                            window.viewport_size(),
+                            this.internal_border_width,
+                        )
+                    } else {
+                        None
+                    };
+                    let Some(point) =
+                        frame_content_point(event.position, window.viewport_size(), border)
+                    else {
+                        if let Some(edges) = resize_edges {
+                            this.frame_drag = Some(FrameDrag {
+                                kind: FrameDragKind::Resize(edges),
+                                start_mouse: event.position,
+                                start_bounds: window.bounds(),
+                                start_viewport: window.viewport_size(),
+                                display_id: window
+                                    .display(cx)
+                                    .map(|display| u32::from(display.id())),
+                                down_position: None,
+                                click_count: event.click_count,
+                                modifiers: mouse_modifier_bits(
+                                    &event.modifiers,
+                                    modifier_mapping,
+                                    left_mouse_down_modifiers.get(),
+                                ),
+                                dragged: false,
+                            });
+                            window.prevent_default();
+                            cx.stop_propagation();
+                        }
+                        return;
+                    };
                     if !left_mouse_down_grid.popup_menu_items.is_empty() {
                         this.consumed_mouse_buttons.insert(MouseButton::Left);
                         this.pressed_button = this.button_at(point);
@@ -2927,16 +3116,35 @@ impl Render for EditorView {
                             window,
                         )
                     }) {
+                        let modifiers = mouse_modifier_bits(
+                            &event.modifiers,
+                            modifier_mapping,
+                            left_mouse_down_modifiers.get(),
+                        );
+                        if let Some(kind) = this.frame_drag_kind_for_position(&position) {
+                            this.frame_drag = Some(FrameDrag {
+                                kind,
+                                start_mouse: event.position,
+                                start_bounds: window.bounds(),
+                                start_viewport: window.viewport_size(),
+                                display_id: window
+                                    .display(cx)
+                                    .map(|display| u32::from(display.id())),
+                                down_position: Some(position),
+                                click_count: event.click_count,
+                                modifiers,
+                                dragged: false,
+                            });
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
                         this.mouse_down_positions
                             .insert(MouseButton::Left, position);
                         let _ = left_mouse_down_tx.send(GuiEvent::MouseDown {
                             button: RemacsMouseButton::Left,
                             click_count: event.click_count,
-                            modifiers: mouse_modifier_bits(
-                                &event.modifiers,
-                                modifier_mapping,
-                                left_mouse_down_modifiers.get(),
-                            ),
+                            modifiers,
                             position,
                         });
                     }
@@ -2985,6 +3193,17 @@ impl Render for EditorView {
                             cx.stop_propagation();
                             return;
                         }
+                    }
+                    if event.pressed_button == Some(MouseButton::Left)
+                        && event.dragging()
+                        && let Some(mut drag) = this.frame_drag
+                    {
+                        this.apply_frame_drag(window, drag, event.position);
+                        drag.dragged = true;
+                        this.frame_drag = Some(drag);
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
                     }
                     if !event.dragging() {
                         return;
@@ -3036,6 +3255,62 @@ impl Render for EditorView {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                    if let Some(drag) = this.frame_drag.take() {
+                        if !drag.dragged
+                            && let Some(down_position) = drag.down_position
+                        {
+                            let point = frame_content_point(
+                                event.position,
+                                window.viewport_size(),
+                                border,
+                            );
+                            let hit = point
+                                .and_then(|point| {
+                                    input::mouse_position_for_point_with_cell_width(
+                                        &left_mouse_up_grid,
+                                        point,
+                                        cell_width,
+                                        window,
+                                    )
+                                    .or_else(|| {
+                                        input::mode_line_mouse_position_with_window(
+                                            &left_mouse_up_grid,
+                                            point,
+                                            cell_width,
+                                            window.scale_factor(),
+                                            window,
+                                        )
+                                    })
+                                });
+                            let scale_factor = window.scale_factor();
+                            if let Some(position) = input::mouse_up_position(
+                                hit,
+                                Some(down_position),
+                                device_pixels(event.position.x - border, scale_factor),
+                                device_pixels(event.position.y - border, scale_factor),
+                            ) {
+                                let _ = left_mouse_up_tx.send(GuiEvent::MouseDown {
+                                    button: RemacsMouseButton::Left,
+                                    click_count: drag.click_count,
+                                    modifiers: drag.modifiers,
+                                    position: down_position,
+                                });
+                                let _ = left_mouse_up_tx.send(GuiEvent::MouseUp {
+                                    button: RemacsMouseButton::Left,
+                                    click_count: event.click_count,
+                                    modifiers: mouse_modifier_bits(
+                                        &event.modifiers,
+                                        modifier_mapping,
+                                        left_mouse_up_modifiers.get(),
+                                    ),
+                                    position,
+                                });
+                            }
+                        }
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
                     let down_position = this.mouse_down_positions.remove(&MouseButton::Left);
                     if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
                         let pressed = this.pressed_button.take();
@@ -3157,6 +3432,11 @@ impl Render for EditorView {
                 MouseButton::Left,
                 cx.listener(|this, _event: &MouseUpEvent, window, cx| {
                     this.mouse_down_positions.remove(&MouseButton::Left);
+                    if this.frame_drag.take().is_some() {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                        return;
+                    }
                     if this.consumed_mouse_buttons.remove(&MouseButton::Left) {
                         this.tab_bar_drag = None;
                         if let Some(event) = this

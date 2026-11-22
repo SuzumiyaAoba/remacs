@@ -94,6 +94,9 @@ fn native_frame_options_keep_the_viewport_at_least_three_rows_high() {
         shaded: false,
         min_width: None,
         min_height: None,
+        drag_with_header_line: false,
+        drag_with_mode_line: false,
+        drag_internal_border: false,
         grid: remacs_runtime::frontend::Grid::blank(40, 12),
     };
     let app = TestAppContext::single();
