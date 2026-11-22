@@ -1071,7 +1071,10 @@ TYPES is a list of types that OBJECT can potentially belong to."
     ;; Build a list of all types OBJECT belongs to.
     (dolist (type types)
       ;; If OBJECT is of type, add type to the matching list.
-      (if (funcall (get type 'cl-deftype-satisfies) object)
+      (if (let ((predicate (get type 'cl-deftype-satisfies)))
+            (if predicate
+                (funcall predicate object)
+              (funcall #'cl-typep object type)))
           (push type found)))
     ;; This memoization has two purposes:
     ;; - Speed up computation.
@@ -1081,7 +1084,10 @@ TYPES is a list of types that OBJECT can potentially belong to."
       ;; Compute an ordered list of types from the DAG.
       (merge-ordered-lists
        (mapcar (lambda (type)
-                 (cl--class-allparents (cl--find-class type)))
+                 (let ((class (cl--find-class type)))
+                   (if class
+                       (cl--class-allparents class)
+                     (list type))))
                found)))))
 
 (defun cl--derived-type-tagcode (obj &optional types &rest _)
@@ -1171,14 +1177,12 @@ TYPES is a list of types that OBJECT can potentially belong to."
 
 ;;;###autoload
 (defun cl--derived-type-generalizers (type)
-  ;; Make sure this derived type can be used without arguments.
-  (let ((type-spec
-         (funcall (or (get type 'cl-deftype-handler)
-                      (error "Type %S lacks cl-deftype-handler" type)))))
-    ;; Check that we have a precomputed predicate since that's what
-    ;; `cl--derived-type-specializers' uses.
-    (or (get type 'cl-deftype-satisfies)
-        (error "Type %S lacks cl-deftype-satisfies" type))
+  ;; Expand named derived types when possible; `cl-typep' also recognizes
+  ;; predicate-backed symbol types such as `face' and `keyword'.
+  (let* ((handler (get type 'cl-deftype-handler))
+         (type-spec (and handler (funcall handler))))
+    (unless (cl--generic-typep-specializer-p type)
+      (error "Type %S is not accepted by `cl-typep'" type))
     (list (if (cl--derived-type-simple-union-p type-spec)
               cl--derived-type-or-generalizer
             cl--derived-type-generalizer))))

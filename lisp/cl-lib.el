@@ -566,9 +566,23 @@ If ALIST is non-nil, the new pairs are prepended to it."
   ;; Also, there is no mechanism to autoload methods, so this can't be
   ;; moved to `cl-extra.el'.
   (declare-function cl--derived-type-generalizers "cl-extra" (type))
+
+  (defun cl--generic-typep-specializer-p (type)
+    "Return non-nil if TYPE is a symbol accepted by `cl-typep'."
+    (and (symbolp type)
+         (or (cl-derived-type-class-p (cl--find-class type))
+             (get type 'cl-deftype-handler)
+             (get type 'cl-deftype-satisfies)
+             (let* ((name (symbol-name type))
+                    (predicate
+                     (or (intern-soft (concat name "p"))
+                         (intern-soft (concat name "-p"))
+                         type)))
+               (fboundp predicate))))
+
   (cl-defmethod cl-generic-generalizers :extra "derived-types" (type)
     "Support for dispatch on derived types, i.e. defined with `cl-deftype'."
-    (if (and (symbolp type) (cl-derived-type-class-p (cl--find-class type)))
+    (if (cl--generic-typep-specializer-p type)
         (cl--derived-type-generalizers type)
       (cl-call-next-method))))
 
