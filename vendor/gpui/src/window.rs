@@ -2012,6 +2012,11 @@ impl Window {
         self.mouse_position
     }
 
+    /// Query the current native pointer position relative to this window.
+    pub fn native_mouse_position(&self) -> Point<Pixels> {
+        self.platform_window.mouse_position()
+    }
+
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers

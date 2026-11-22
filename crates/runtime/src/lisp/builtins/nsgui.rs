@@ -802,7 +802,14 @@ fn f_ns_mouse_absolute_pixel_position(i: &mut Interp, _a: crate::lisp::Argv) -> 
     if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, &frame) {
         return Err(winsys(i));
     }
-    let (x, y) = i.gui_mouse_absolute_position.unwrap_or((0, 0));
+    let frame_id = frame.borrow().id;
+    let current_position = i.frame_window_backend.clone().and_then(|backend| {
+        backend
+            .current_mouse_absolute_pixel_position(frame_id)
+            .ok()
+            .flatten()
+    });
+    let (x, y) = current_position.or(i.gui_mouse_absolute_position).unwrap_or((0, 0));
     Ok(Value::Cons(Cons::new(Value::Int(x), Value::Int(y))))
 }
 

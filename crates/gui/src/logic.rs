@@ -681,6 +681,10 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         reply: SyncSender<Result<bool, String>>,
     },
+    CurrentMouseAbsolutePosition {
+        frame_id: usize,
+        reply: SyncSender<Option<(i128, i128)>>,
+    },
     FrameVisibility {
         frame_id: usize,
         visibility: FrameVisibility,
@@ -1256,6 +1260,19 @@ impl GuiFrameVisibilityBackend {
             .recv()
             .map_err(|_| "GUI window service stopped".to_owned())?
     }
+
+    fn current_mouse_absolute_position(
+        &self,
+        frame_id: usize,
+    ) -> Result<Option<(i128, i128)>, String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::CurrentMouseAbsolutePosition { frame_id, reply })
+            .map_err(|_| "GUI window service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI window service stopped".to_owned())
+    }
 }
 
 impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend {
@@ -1391,6 +1408,13 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
 
     fn warp_pointer_absolute(&self, frame_id: usize, x: i128, y: i128) -> Result<(), String> {
         self.warp_pointer(frame_id, x, y, true)
+    }
+
+    fn current_mouse_absolute_pixel_position(
+        &self,
+        frame_id: usize,
+    ) -> Result<Option<(i128, i128)>, String> {
+        self.current_mouse_absolute_position(frame_id)
     }
 }
 

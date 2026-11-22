@@ -374,6 +374,13 @@ pub trait FrameWindowBackend {
         x: i128,
         y: i128,
     ) -> Result<(), String>;
+    /// Query the current pointer position in pixels relative to FRAME's display.
+    fn current_mouse_absolute_pixel_position(
+        &self,
+        _frame_id: usize,
+    ) -> Result<Option<(i128, i128)>, String> {
+        Ok(None)
+    }
 }
 
 /// Host color panel used by native GUI faces.

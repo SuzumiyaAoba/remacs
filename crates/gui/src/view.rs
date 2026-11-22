@@ -2204,6 +2204,37 @@ impl EditorView {
         self.auto_lower.set(auto_lower);
     }
 
+    pub(super) fn current_mouse_absolute_pixel_position(
+        &self,
+        window: &Window,
+    ) -> Option<(i128, i128)> {
+        let geometry = self.geometry.as_ref()?;
+        let bounds = window.bounds();
+        let viewport = window.viewport_size();
+        let content_top_offset =
+            (f32::from(bounds.size.height) - f32::from(viewport.height)).round() as i128;
+        let absolute = absolute_mouse_pixel_position(
+            window.native_mouse_position(),
+            geometry.frame_left,
+            geometry.frame_top,
+            content_top_offset,
+        );
+        let display_origin = geometry
+            .current_display_id
+            .and_then(|display_id| {
+                geometry
+                    .monitors
+                    .iter()
+                    .find(|monitor| monitor.display_id == display_id)
+                    .map(|monitor| (monitor.geometry[0], monitor.geometry[1]))
+            })
+            .unwrap_or((0, 0));
+        Some((
+            absolute.0.saturating_sub(display_origin.0),
+            absolute.1.saturating_sub(display_origin.1),
+        ))
+    }
+
     pub(super) fn set_no_accept_focus(
         &mut self,
         window: &mut Window,

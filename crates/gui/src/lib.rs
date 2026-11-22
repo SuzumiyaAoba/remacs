@@ -1172,6 +1172,20 @@ pub fn run_gui_with_dump(
                     GuiRequest::FrameReady { frame_id, reply } => {
                         let _ = reply.send(Ok(windows.contains_key(&frame_id)));
                     }
+                    GuiRequest::CurrentMouseAbsolutePosition { frame_id, reply } => {
+                        let position = windows
+                            .get(&frame_id)
+                            .copied()
+                            .and_then(|handle| {
+                                handle
+                                    .update(cx, |view, window, _cx| {
+                                        view.current_mouse_absolute_pixel_position(window)
+                                    })
+                                    .ok()
+                                    .flatten()
+                            });
+                        let _ = reply.send(position);
+                    }
                     GuiRequest::Prompt {
                         frame_id,
                         message,
