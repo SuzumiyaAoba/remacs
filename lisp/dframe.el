@@ -100,7 +100,6 @@
 
 ;;; Bugs
 ;;
-;;  * The timer managers doesn't handle multiple different timeouts.
 ;;  * You can't specify continuous timeouts (as opposed to just idle timers.)
 
 (defvar x-pointer-hand2)
@@ -633,8 +632,8 @@ Argument PROMPT is the prompt to use."
 ;;; timer management
 ;;
 ;; Unlike speedbar with a dedicated set of routines, dframe has one master
-;; timer, and all dframe users will use it.  At least until I figure out a way
-;; around that problem.
+;; timer.  It runs at the shortest client interval and dispatches each client
+;; only when that client's own idle timeout has elapsed.
 ;;
 ;; Advantage 1: Two apps with timer/frames can munge the master list
 ;;              to make sure they occur in order.
@@ -643,25 +642,40 @@ Argument PROMPT is the prompt to use."
 (defvar dframe-client-functions nil
   "List of client functions using the dframe timer.")
 
+(defvar dframe-client-intervals nil
+  "List of (FUNCTION TIMEOUT LAST-IDLE-TIME) entries for dframe clients.")
+
+(defun dframe--current-idle-seconds ()
+  (let ((idle-time (current-idle-time)))
+    (if idle-time (float-time idle-time) 0.0)))
+
 (defun dframe-set-timer (timeout fn &optional _null-on-error)
-  "Apply a timer with TIMEOUT, to call FN, or remove a timer if TIMEOUT is nil.
-TIMEOUT is the number of seconds until the dframe controlled program
-timer is called again.  When TIMEOUT is nil, turn off all timeouts.
+  "Apply an idle timer with TIMEOUT for client function FN.
+TIMEOUT is the number of idle seconds between calls to FN.  When TIMEOUT is
+nil, remove FN's timeout without changing other clients' intervals.
 This function must be called from the buffer belonging to the program
 who requested the timer.  NULL-ON-ERROR is ignored."
-  ;; First, fix up our list of client functions
+  ;; Keep the callback order and interval table in step.
   (if timeout
-      (add-to-list 'dframe-client-functions fn)
-    (setq dframe-client-functions (delete fn dframe-client-functions)))
-  ;; Now decided what to do about the timeout.
-  (if (or
-       ;; We have a timer, restart the timer with the new time.
-       timeout
-       ;; We have a timer, an off is requested, and no client
-       ;; functions are left, shut er down.
-       (and dframe-timer (not timeout) (not dframe-client-functions)))
-      ;; Only call the low level function if we are changing the state.
-      (dframe-set-timer-internal timeout)))
+      (progn
+        (add-to-list 'dframe-client-functions fn)
+        (let ((client (assoc fn dframe-client-intervals))
+              (idle-time (dframe--current-idle-seconds)))
+          (if client
+              (setcdr client (list timeout idle-time))
+            (push (list fn timeout idle-time) dframe-client-intervals))))
+    (setq dframe-client-functions (delete fn dframe-client-functions))
+    (setq dframe-client-intervals
+          (let ((clients dframe-client-intervals)
+                remaining)
+            (while clients
+              (unless (equal (caar clients) fn)
+                (push (car clients) remaining))
+              (setq clients (cdr clients)))
+            (nreverse remaining))))
+  (dframe-set-timer-internal
+   (and dframe-client-intervals
+        (apply #'min (mapcar #'cadr dframe-client-intervals)))))
 
 (defun dframe-set-timer-internal (timeout &optional _null-on-error)
   "Apply a timer with TIMEOUT to call the dframe timer manager."
@@ -673,12 +687,26 @@ who requested the timer.  NULL-ON-ERROR is ignored."
 
 (defun dframe-timer-fn ()
   "Called due to the dframe timer.
-Evaluates all cached timer functions in sequence."
-  (let ((l dframe-client-functions))
-    (while (and l (sit-for 0))
-      (with-demoted-errors "DFRAME TIMER ERROR: %S"
-	(funcall (car l)))
-      (setq l (cdr l)))))
+Evaluates due client timer functions in sequence."
+  (let ((idle-time (current-idle-time))
+        (l dframe-client-functions))
+    (when idle-time
+      (let ((now (float-time idle-time)))
+        (while (and l (sit-for 0))
+          (let* ((fn (car l))
+                 (client (assoc fn dframe-client-intervals)))
+            (when client
+              (let ((last-idle-time (nth 2 client)))
+                ;; User input resets current-idle-time; restart this client's
+                ;; elapsed idle interval with it.
+                (when (< now last-idle-time)
+                  (setq last-idle-time 0.0)
+                  (setcar (cddr client) last-idle-time))
+                (when (>= (- now last-idle-time) (cadr client))
+                  (setcar (cddr client) now)
+                  (with-demoted-errors "DFRAME TIMER ERROR: %S"
+		      (funcall fn)))))
+          (setq l (cdr l)))))))
 
 (defun dframe-popup-kludge (e)
   "Pop up a menu related to the clicked on item.
