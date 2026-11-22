@@ -77,7 +77,11 @@ fn execute_on_appkit_thread(script: &str) -> Result<AppleScriptResult, String> {
                 .unwrap_or(AppleScriptResult::Other));
         }
 
-        let value: i32 = msg_send![descriptor, int32Value];
+        let text: id = msg_send![descriptor, coerceToDescriptorType: TYPE_UTF8_TEXT];
+        if text == nil {
+            return Ok(AppleScriptResult::Other);
+        }
+        let value: i32 = msg_send![text, int32Value];
         Ok(AppleScriptResult::Integer(i128::from(value)))
     }
 }
