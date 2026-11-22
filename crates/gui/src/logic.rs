@@ -694,6 +694,11 @@ pub(super) enum GuiRequest {
         above: bool,
         reply: SyncSender<Result<(), String>>,
     },
+    SendItems {
+        frame_id: usize,
+        items: Vec<String>,
+        reply: SyncSender<Result<(), String>>,
+    },
     FrameListZOrder {
         reply: SyncSender<Result<Vec<usize>, String>>,
     },
@@ -1353,6 +1358,20 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
         response
             .recv()
             .map_err(|_| "GUI window service stopped".to_owned())?
+    }
+
+    fn send_items(&self, frame_id: usize, items: Vec<String>) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::SendItems {
+                frame_id,
+                items,
+                reply,
+            })
+            .map_err(|_| "GUI sharing service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI sharing service stopped".to_owned())?
     }
 
     fn frame_list_z_order(&self) -> Result<Vec<usize>, String> {

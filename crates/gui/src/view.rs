@@ -1798,6 +1798,17 @@ impl EditorView {
         self.update_window_title(window);
     }
 
+    pub(super) fn share_picker_anchor(&self) -> Option<(f32, f32, f32)> {
+        let cursor = self.grid.cursors.iter().find(|cursor| cursor.selected)?;
+        let x = self.internal_border_width as f32
+            + f32::from(self.cell_width * (cursor.column as f32 + 0.5));
+        let y = self.internal_border_width as f32
+            + f32::from(grid_row_top(&self.grid, cursor.row, self.line_height))
+            + f32::from(grid_row_height(&self.grid, cursor.row, self.line_height))
+            + 10.0;
+        Some((x, y, 2.0))
+    }
+
     fn publish_frame_font_metrics(
         &mut self,
         default_font: &Font,

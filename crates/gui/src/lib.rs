@@ -1225,6 +1225,27 @@ pub fn run_gui_with_dump(
                         };
                         let _ = reply.send(result);
                     }
+                    GuiRequest::SendItems {
+                        frame_id,
+                        items,
+                        reply,
+                    } => {
+                        let result = if let Some(handle) = windows.get(&frame_id).copied() {
+                            handle
+                                .update(cx, move |_view, window, _cx| {
+                                    show_native_share_picker(
+                                        window,
+                                        &items,
+                                        _view.share_picker_anchor(),
+                                    )
+                                })
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result)
+                        } else {
+                            Err(format!("GUI frame {frame_id} is not open"))
+                        };
+                        let _ = reply.send(result);
+                    }
                     GuiRequest::FrameListZOrder { reply } => {
                         let result = cx
                             .update(|app| app.window_stack())
@@ -3105,16 +3126,103 @@ fn set_native_skip_taskbar(_window: &Window, _skip_taskbar: bool) -> Result<(), 
 }
 
 #[cfg(target_os = "macos")]
-fn appkit_native_window(window: &Window) -> Option<id> {
+fn appkit_native_view(window: &Window) -> Option<id> {
     let handle = raw_window_handle::HasWindowHandle::window_handle(window).ok()?;
     let raw_window_handle::RawWindowHandle::AppKit(handle) = handle.as_raw() else {
         return None;
     };
+    let view = handle.ns_view.as_ptr() as id;
+    (!view.is_null()).then_some(view)
+}
+
+#[cfg(target_os = "macos")]
+fn appkit_native_window(window: &Window) -> Option<id> {
+    let view = appkit_native_view(window)?;
     unsafe {
-        let view = handle.ns_view.as_ptr() as id;
         let native_window: id = msg_send![view, window];
         (!native_window.is_null()).then_some(native_window)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn show_native_share_picker(
+    window: &Window,
+    items: &[String],
+    anchor: Option<(f32, f32, f32)>,
+) -> Result<(), String> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let view = appkit_native_view(window)
+        .ok_or_else(|| "native frame view is unavailable".to_owned())?;
+    let bounds: NSRect = unsafe { msg_send![view, bounds] };
+    let flipped: objc::runtime::BOOL = unsafe { msg_send![view, isFlipped] };
+    if view == nil {
+        return Err("native frame view is unavailable".to_owned());
+    }
+    window.activate_window();
+
+    let file_manager: id = unsafe { msg_send![class!(NSFileManager), defaultManager] };
+    let mut share_items = Vec::with_capacity(items.len());
+    for item in items {
+        let ns_item: id = unsafe { NSString::alloc(nil).init_str(item) };
+        let ns_item: id = unsafe { msg_send![ns_item, autorelease] };
+        let exists: objc::runtime::BOOL =
+            unsafe { msg_send![file_manager, fileExistsAtPath: ns_item] };
+        let share_item = if exists == YES {
+            let url: id = unsafe { msg_send![class!(NSURL), fileURLWithPath: ns_item] };
+            if url == nil {
+                return Err(format!("unable to create a file URL for {item:?}"));
+            }
+            url
+        } else {
+            ns_item
+        };
+        share_items.push(share_item);
+    }
+    let share_items = unsafe { NSArray::arrayWithObjects(nil, &share_items) };
+    if share_items == nil {
+        return Err("unable to create sharing items".to_owned());
+    }
+
+    let rect = anchor.map_or_else(
+        || NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0)),
+        |(x, y, height)| {
+            let y = if flipped == YES {
+                y
+            } else {
+                (bounds.size.height as f32) - y - height
+            };
+            NSRect::new(
+                NSPoint::new(x as f64, y as f64),
+                NSSize::new(2.0, height.max(2.0) as f64),
+            )
+        },
+    );
+    unsafe {
+        let picker: id = msg_send![class!(NSSharingServicePicker), alloc];
+        let picker: id = msg_send![picker, initWithItems: share_items];
+        if picker == nil {
+            return Err("unable to create the macOS sharing picker".to_owned());
+        }
+        let _: () = msg_send![
+            picker,
+            showRelativeToRect: rect
+            ofView: view
+            preferredEdge: 3usize
+        ];
+        let _: id = msg_send![picker, autorelease];
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn show_native_share_picker(
+    _window: &Window,
+    _items: &[String],
+    _anchor: Option<(f32, f32, f32)>,
+) -> Result<(), String> {
+    Err("the macOS sharing picker is unavailable".to_owned())
 }
 
 fn show_native_color_panel(window: Option<&Window>) -> Result<(), String> {

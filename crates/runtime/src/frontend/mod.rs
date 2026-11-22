@@ -343,6 +343,10 @@ pub trait FrameWindowBackend {
     fn frame_list_z_order(&self) -> Result<Vec<usize>, String> {
         Err("native frame stacking order is unavailable".to_owned())
     }
+    /// Open the native sharing picker for ITEMS, anchored to FRAME.
+    fn send_items(&self, _frame_id: usize, _items: Vec<String>) -> Result<(), String> {
+        Err("native item sharing is unavailable".to_owned())
+    }
     /// Move the pointer to pixel coordinates relative to FRAME's native area.
     fn warp_pointer_in_frame(
         &self,

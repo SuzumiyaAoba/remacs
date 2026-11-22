@@ -1222,6 +1222,7 @@ fn f_ns_selection_owner_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// window-system check is reached.
 fn f_ns_send_items(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let mut cur = a[0].clone();
+    let mut items = Vec::new();
     loop {
         match cur {
             Value::Nil => break,
@@ -1230,7 +1231,9 @@ fn f_ns_send_items(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                     let cb = c.borrow();
                     (cb.car.clone(), cb.cdr.clone())
                 };
-                if !matches!(car, Value::Str(_)) {
+                if let Value::Str(item) = &car {
+                    items.push(item.borrow().to_unicode_lossy());
+                } else {
                     let err = i.q("error");
                     return Err(
                         i.signal_data(err, vec![Value::string("Element not a string"), car])
@@ -1241,7 +1244,26 @@ fn f_ns_send_items(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             other => return Err(i.wrong_type_mut("listp", &other)),
         }
     }
-    Err(winsys(i))
+    if !ns_window_system_in_use(i) {
+        return Err(winsys(i));
+    }
+    if items.is_empty() {
+        return Ok(Value::Nil);
+    }
+    let frame_id = i
+        .selected_frame
+        .as_ref()
+        .filter(|frame| crate::editor::frame_is_nextstep(i, frame))
+        .map(|frame| frame.borrow().id)
+        .ok_or_else(|| winsys(i))?;
+    let Some(backend) = i.frame_window_backend.clone() else {
+        return Err(winsys(i));
+    };
+    backend
+        .prepare_frame(i, frame_id)
+        .and_then(|()| backend.send_items(frame_id, items))
+        .map_err(|error| i.error(format!("Sharing items failed: {error}")))?;
+    Ok(Value::Nil)
 }
 
 /// `ns-frame-restack': GNU nsfns.m decodes FRAME1 then FRAME2 with
