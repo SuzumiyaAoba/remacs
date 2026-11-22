@@ -3100,11 +3100,11 @@ fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), St
     };
     let net_wm_state = xcb_intern_atom(&context.connection, b"_NET_WM_STATE")?;
     let skip_taskbar_atom = xcb_intern_atom(&context.connection, b"_NET_WM_STATE_SKIP_TASKBAR")?;
-    let skip_pager_atom = xcb_intern_atom(&context.connection, b"_NET_WM_STATE_SKIP_PAGER")?;
+    // Keep the taskbar hint independent from the workspace pager hint.
     let data = [
         if skip_taskbar { 1 } else { 0 },
         skip_taskbar_atom.resource_id(),
-        skip_pager_atom.resource_id(),
+        0,
         1,
         0,
     ];
