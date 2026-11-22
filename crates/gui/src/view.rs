@@ -1724,6 +1724,9 @@ pub(super) struct EditorView {
     native_minimum_size: Option<(Size<Pixels>, f32)>,
     geometry: Option<GuiGeometry>,
     runtime_frame_size: Option<(usize, usize, usize, usize)>,
+    last_frame_font_size_request_id: i128,
+    pending_font_pixel_resize: bool,
+    pending_font_pixel_size: Option<(usize, usize)>,
     runtime_frame_position: Option<RuntimeFramePosition>,
     font_metrics_cache: Option<FrameFontMetrics>,
     sent_font_metrics_frame_id: Option<usize>,
@@ -1908,6 +1911,9 @@ impl EditorView {
             native_minimum_size: None,
             geometry: None,
             runtime_frame_size: None,
+            last_frame_font_size_request_id: 0,
+            pending_font_pixel_resize: false,
+            pending_font_pixel_size: None,
             runtime_frame_position: None,
             font_metrics_cache: None,
             sent_font_metrics_frame_id: None,
@@ -2055,7 +2061,12 @@ impl EditorView {
         true
     }
 
-    pub(super) fn needs_frame_size_update(&mut self, width: usize, height: usize) -> bool {
+    pub(super) fn needs_frame_size_update(
+        &mut self,
+        width: usize,
+        height: usize,
+        keep_pixels_for_font_change: bool,
+    ) -> bool {
         let extra_height = self
             .grid
             .row_heights
@@ -2068,9 +2079,33 @@ impl EditorView {
             self.internal_border_width,
             extra_height,
         );
-        let changed = self.runtime_frame_size != Some(size);
+        if self.pending_font_pixel_size.take() == Some((width, height)) {
+            self.runtime_frame_size = Some(size);
+            return false;
+        }
+        let changed = match self.runtime_frame_size {
+            None => true,
+            Some(old) if keep_pixels_for_font_change => {
+                old.0 != size.0 || old.1 != size.1 || old.2 != size.2
+            }
+            Some(old) => old != size,
+        };
         self.runtime_frame_size = Some(size);
         changed
+    }
+
+    pub(super) fn take_frame_font_size_request(&mut self) -> Option<bool> {
+        let request_id = self.grid.frame_font_size_request_id;
+        if request_id == 0 || request_id == self.last_frame_font_size_request_id {
+            return None;
+        }
+        self.last_frame_font_size_request_id = request_id;
+        let keep_size = self.grid.frame_font_keep_size;
+        self.pending_font_pixel_resize = keep_size;
+        if !keep_size {
+            self.pending_font_pixel_size = None;
+        }
+        Some(keep_size)
     }
 
     pub(super) fn needs_frame_position_update(
@@ -2368,6 +2403,10 @@ impl Render for EditorView {
         let rows = rows_fitting_viewport(&self.grid, content_height, line_height);
         let cols = cols.max(super::MIN_FRAME_COLUMNS);
         let rows = rows.max(3);
+        if self.pending_font_pixel_resize {
+            self.pending_font_pixel_resize = false;
+            self.pending_font_pixel_size = Some((cols, rows));
+        }
         if (cols, rows) != (self.cols, self.rows) {
             self.cols = cols;
             self.rows = rows;

@@ -2423,7 +2423,14 @@ fn apply_frame_snapshot_bounds(
     top: Option<FramePosition>,
     parent_bounds: Option<Bounds<Pixels>>,
 ) {
-    if view.needs_frame_size_update(width, height) {
+    let font_size_request = view.take_frame_font_size_request();
+    let size_changed = view.needs_frame_size_update(
+        width,
+        height,
+        font_size_request == Some(true),
+    );
+    let resize_for_font_change = font_size_request == Some(false);
+    if size_changed || resize_for_font_change {
         view.resize_to_cells(width, height, window);
     }
     if width_size.is_some() || height_size.is_some() {

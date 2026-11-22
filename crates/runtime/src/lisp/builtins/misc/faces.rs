@@ -975,11 +975,25 @@ pub(super) fn f_set_frame_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     crate::editor::f_set_face_attribute(i, attributes.into())?;
 
     let font_parameter = Value::Sym(i.q("font"));
+    let font_size_request_parameter = Value::Sym(i.q("remacs--frame-font-size-request"));
+    let font_keep_size_parameter = Value::Sym(i.q("remacs--frame-font-keep-size"));
+    let keep_size = a.get(1).is_some_and(Value::truthy);
     for frame in target_frames {
-        let params = crate::lisp::eval::plist_put_front(
-            &frame.borrow().params,
-            &font_parameter,
-            a[0].clone(),
+        let mut params = frame.borrow().params.clone();
+        let request_id = crate::lisp::eval::plist_get_v(&params, &font_size_request_parameter)
+            .int()
+            .unwrap_or(0)
+            .saturating_add(1);
+        params = crate::lisp::eval::plist_put_front(&params, &font_parameter, a[0].clone());
+        params = crate::lisp::eval::plist_put_front(
+            &params,
+            &font_size_request_parameter,
+            Value::Int(request_id),
+        );
+        params = crate::lisp::eval::plist_put_front(
+            &params,
+            &font_keep_size_parameter,
+            Value::from_bool(keep_size),
         );
         frame.borrow_mut().params = params;
     }

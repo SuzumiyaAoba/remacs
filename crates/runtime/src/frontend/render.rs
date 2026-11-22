@@ -916,6 +916,10 @@ pub struct Grid {
     pub bidi_paragraph_ranges: Vec<GridBidiParagraphRange>,
     /// Whether the GUI native frame may resize by individual pixels.
     pub frame_resize_pixelwise: bool,
+    /// Monotonic request ID for the most recent `set-frame-font' call.
+    pub frame_font_size_request_id: i128,
+    /// Whether that font change should preserve the native pixel dimensions.
+    pub frame_font_keep_size: bool,
     /// Row-local windows with pixelwise horizontal offsets or widths.
     pub pixelwise_segments: Vec<GridPixelwiseSegment>,
     /// Cell styles, one entry for each display column in a row.
@@ -1250,6 +1254,8 @@ impl Grid {
             bidi_disabled_ranges: Vec::new(),
             bidi_paragraph_ranges: Vec::new(),
             frame_resize_pixelwise: false,
+            frame_font_size_request_id: 0,
+            frame_font_keep_size: false,
             pixelwise_segments: Vec::new(),
             attrs: vec![vec![CellStyle::default(); width]; height],
             char_attrs: vec![Vec::new(); height],
@@ -11773,6 +11779,29 @@ fn render_grid_internal(
     let frame_resize_pixelwise = i
         .q_soft("frame-resize-pixelwise")
         .is_some_and(|symbol| i.symbol_value(symbol).truthy());
+    let frame_font_size_request_id = frame
+        .as_ref()
+        .and_then(|frame| {
+            i.q_soft("remacs--frame-font-size-request").map(|parameter| {
+                crate::lisp::eval::plist_get_v(
+                    &frame.borrow().params,
+                    &Value::Sym(parameter),
+                )
+            })
+        })
+        .and_then(|value| value.int())
+        .unwrap_or(0);
+    let frame_font_keep_size = frame
+        .as_ref()
+        .and_then(|frame| {
+            i.q_soft("remacs--frame-font-keep-size").map(|parameter| {
+                crate::lisp::eval::plist_get_v(
+                    &frame.borrow().params,
+                    &Value::Sym(parameter),
+                )
+            })
+        })
+        .is_some_and(|value| value.truthy());
     let gamma_exponent = frame
         .as_ref()
         .filter(|frame| crate::editor::frame_is_graphical(i, frame))
@@ -11881,6 +11910,8 @@ fn render_grid_internal(
                 bidi_disabled_ranges: Vec::new(),
                 bidi_paragraph_ranges: Vec::new(),
                 frame_resize_pixelwise,
+                frame_font_size_request_id,
+                frame_font_keep_size,
                 pixelwise_segments: Vec::new(),
                 blink_cursor,
                 blink_interval,
@@ -15095,6 +15126,8 @@ fn render_grid_internal(
         bidi_disabled_ranges,
         bidi_paragraph_ranges,
         frame_resize_pixelwise,
+        frame_font_size_request_id,
+        frame_font_keep_size,
         pixelwise_segments,
         attrs,
         char_attrs,
