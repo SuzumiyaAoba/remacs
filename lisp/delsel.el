@@ -171,6 +171,26 @@ so it does not work when `delete-selection-save-to-register' is nil."
               (setq count (1- count)))
           (message "Cannot locate replacement text"))))))
 
+(defun delete-selection--read-only-value-inhibited-p (value)
+  (or (eq inhibit-read-only t)
+      (and (consp inhibit-read-only)
+           (memq value inhibit-read-only))))
+
+(defun delete-selection--read-only-insertion-p (position)
+  "Return non-nil if insertion at POSITION would inherit read-only text."
+  (let ((read-only (get-char-property position 'read-only)))
+    (or (and read-only
+             (not (delete-selection--read-only-value-inhibited-p read-only)))
+        (and (> position (point-min))
+             (let* ((previous (1- position))
+                    (read-only (get-text-property previous 'read-only))
+                    (rear-nonsticky (get-text-property previous 'rear-nonsticky)))
+               (and read-only
+                    (not (delete-selection--read-only-value-inhibited-p read-only))
+                    (not (eq rear-nonsticky t))
+                    (not (and (consp rear-nonsticky)
+                              (memq 'read-only rear-nonsticky))))))))
+
 (defun delete-selection-helper (type)
   "Delete selection according to TYPE:
  `yank'
@@ -198,6 +218,11 @@ so it does not work when `delete-selection-save-to-register' is nil."
      the command which will insert replacement text."
   (condition-case data
       (cond ((eq type 'kill)            ;Deprecated, backward compatibility.
+	     (when (and overwrite-mode
+			(eq this-command 'self-insert-command)
+			(delete-selection--read-only-insertion-p
+			 (region-beginning)))
+	       (signal 'text-read-only nil))
 	     (delete-active-region t)
 	     (if (and overwrite-mode
 		      (eq this-command 'self-insert-command))
@@ -206,6 +231,8 @@ so it does not work when `delete-selection-save-to-register' is nil."
 		    (prefix-numeric-value current-prefix-arg))
 		   (setq this-command 'ignore))))
 	    ((eq type 'yank)
+	     (when (delete-selection--read-only-insertion-p (region-beginning))
+	       (signal 'text-read-only nil))
 	     ;; Before a yank command, make sure we don't yank the
 	     ;; head of the kill-ring that really comes from the
 	     ;; currently active region we are going to delete.
@@ -228,6 +255,8 @@ so it does not work when `delete-selection-save-to-register' is nil."
 		 (setq this-command 'ignore))))
 	    ((functionp type) (delete-selection-helper (funcall type)))
 	    (type
+	     (when (delete-selection--read-only-insertion-p (region-beginning))
+	       (signal 'text-read-only nil))
 	     (delete-active-region)
 	     (if (and overwrite-mode
 		      (eq this-command 'self-insert-command))
@@ -243,19 +272,16 @@ so it does not work when `delete-selection-save-to-register' is nil."
     ;; stop safe_run_hooks from clearing out pre-command-hook.
     (file-supersession (message "%s" (cadr data)) (ding))
     (text-read-only
-     ;; This signal may come either from `delete-active-region' or
-     ;; `self-insert-command' (when `overwrite-mode' is non-nil).
+     ;; This signal may come from the boundary check below,
+     ;; `delete-active-region', or `self-insert-command' (when
+     ;; `overwrite-mode' is non-nil).
      ;; To avoid clearing out `pre-command-hook' we handle this case
      ;; by issuing a simple message.  Note, however, that we do not
      ;; handle all related problems: When read-only text ends before
      ;; the end of the region, the latter is not deleted but any
      ;; subsequent insertion would succeed.  Stop the command to prevent
-     ;; that insertion.  This still does not handle the case where
-     ;; read-only text ends precisely where the region starts: Deletion
-     ;; may succeed but the subsequent insertion would fail with a
-     ;; text-read-only error.  To handle that case we would have to
-     ;; investigate text properties at both ends of the region and
-     ;; skip the deletion when inserting text is forbidden there.
+     ;; that insertion.  The boundary immediately before the region is
+     ;; checked by `delete-selection--read-only-insertion-p' before deletion.
      (setq this-command 'ignore)
      (message "Text is read-only") (ding))))
 
