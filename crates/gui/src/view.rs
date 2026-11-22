@@ -6636,10 +6636,11 @@ fn style_colors(
     let rgb_color = |c: remacs_runtime::frontend::CellColor| {
         ((c.0 as u32) << 16) | ((c.1 as u32) << 8) | c.2 as u32
     };
+    let default_foreground = gamma_correct_rgb(FG, gamma_exponent);
     let foreground = st
         .fg
         .map(|color| rgb(rgb_color(color)).into())
-        .unwrap_or_else(|| rgb(gamma_correct_rgb(FG, gamma_exponent)).into());
+        .unwrap_or_else(|| rgb(default_foreground).into());
     let background = st
         .bg
         .map(|color| background_rgba(rgb_color(color), background_alpha));
@@ -6649,7 +6650,7 @@ fn style_colors(
                 .map(|color| rgb(rgb_color(color)).into())
                 .unwrap_or_else(|| rgb(default_background).into()),
             Some(background_rgba(
-                st.fg.map(rgb_color).unwrap_or(FG),
+                st.fg.map(rgb_color).unwrap_or(default_foreground),
                 background_alpha,
             )),
         )
