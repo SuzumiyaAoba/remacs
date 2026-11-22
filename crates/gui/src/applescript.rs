@@ -2,8 +2,9 @@
 
 use block::ConcreteBlock;
 use cocoa::{
+    appkit::{NSEventModifierFlags, NSEventType},
     base::{NO, id, nil},
-    foundation::NSString,
+    foundation::{NSPoint, NSString},
 };
 use objc::{class, msg_send, sel, sel_impl};
 use remacs_runtime::frontend::AppleScriptResult;
@@ -28,6 +29,19 @@ pub(super) fn execute(script: &str) -> Result<AppleScriptResult, String> {
             let result = execute_on_appkit_thread(&script);
             let _ = done.send(result);
             let _: () = msg_send![app, stop: nil];
+            let wake_event: id = msg_send![
+                class!(NSEvent),
+                otherEventWithType: NSEventType::NSApplicationDefined
+                location: NSPoint::new(0.0, 0.0)
+                modifierFlags: NSEventModifierFlags::empty()
+                timestamp: 0.0f64
+                windowNumber: 0isize
+                context: nil
+                subtype: 0i16
+                data1: 0isize
+                data2: 0isize
+            ];
+            let _: () = msg_send![app, postEvent: wake_event atStart: NO];
         });
         let block = block.copy();
         let timer: id = msg_send![
