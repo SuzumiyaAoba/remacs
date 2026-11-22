@@ -2531,16 +2531,16 @@ roman numerical list, just use a prefix to set PREFER-ROMAN."
            (nth 0 context) (nth 1 context) (nth 2 context) prefer-roman)
         (rst-insert-list-new-item)))))
 
-;; FIXME: This is wrong because it misses prefixed lines without intervening
-;;        new line. See `rst-straighten-bullets-region-BUGS' and
-;;        `rst-find-begs-BUGS'.
-(defun rst-find-begs (beg end rst-re-beg)
+;; The context filter finds beginnings of list blocks.  Commands that operate
+;; on every item must pass ALL-BEGS.
+(defun rst-find-begs (beg end rst-re-beg &optional all-begs)
   ;; testcover: ok.
   "Return the positions of begs in region BEG to END.
 RST-RE-BEG is a `rst-re' argument and matched at the beginning of
 a line.  Return a list of (POINT . COLUMN) where POINT gives the
 point after indentation and COLUMN gives its column.  The list is
-ordered by POINT."
+ordered by POINT.  If ALL-BEGS is non-nil, include every matching
+line, even when it continues a same-level list."
   (let (r)
     (save-match-data
       (save-excursion
@@ -2554,7 +2554,8 @@ ordered by POINT."
 	    ;; FIXME refactoring: Consider using `rst-forward-line-looking-at'.
 	    (when (and
 		   (looking-at (rst-re rst-re-beg)) ; Start found
-		   (not (rst-forward-line-looking-at
+		   (or all-begs
+		       (not (rst-forward-line-looking-at
 			 -1 'lin-end
                          (lambda (mtcd) ; Previous line exists and is...
                            (and
@@ -2562,7 +2563,7 @@ ordered by POINT."
                             (<= (current-indentation) clm) ; less indented
                             (not (and (= (current-indentation) clm)
 					; not a beg at same level.
-                                      (looking-at (rst-re rst-re-beg)))))))))
+                                      (looking-at (rst-re rst-re-beg))))))))))
 	      (back-to-indentation)
 	      (push (cons (point) clm) r)))
 	  (1value ; At least one line is moved in this loop.
@@ -2583,7 +2584,7 @@ modified."
       (rst-destructuring-dolist
 	  ((point &rest column
 		  &aux (found (assoc column clm2pnts)))
-	   (rst-find-begs beg end 'bul-beg))
+	   (rst-find-begs beg end 'bul-beg t))
 	(if found
 	    ;;; (push point (cdr found)) ; FIXME: Doesn't work with `testcover'.
 	    (setcdr found (cons point (cdr found))) ; Synonym.
