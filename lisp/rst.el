@@ -3606,12 +3606,11 @@ do all lines instead of just paragraphs."
          (insert indent)))
        nil))))
 
-;; FIXME: Does not deal with multiple levels independently.
 (defun rst-convert-bullets-to-enumeration (beg end)
   "Convert the bulleted and enumerated items in the region to enumerated lists.
 Renumber as necessary.  Region is from BEG to END."
   (interactive "r")
-  (let ((count 1)
+  (let ((counts nil)
 	(end-marker (copy-marker end t)))
     (unwind-protect
 	(save-match-data
@@ -3625,15 +3624,24 @@ Renumber as necessary.  Region is from BEG to END."
 	       (goto-char marker) nil)
 	      (beginning-of-line)
 	      (when (looking-at (rst-re 'itmany-beg-1))
-		(let* ((old-tag (match-string-no-properties 1))
+		(let* ((indent (let ((indent (current-indentation)))
+			  (setq counts
+				(cl-remove-if (lambda (entry) (> (car entry) indent))
+					    counts))
+			  indent))
+		       (count (1+ (or (cdr (assq indent counts)) 0)))
+		       (old-tag (match-string-no-properties 1))
 		       (new-tag (format "%d." count))
 		       (delta (- (length new-tag) (length old-tag)))
 		       (body-column
 			(save-excursion
 			  (goto-char (match-end 0))
 			  (current-column))))
+		  (let ((level (assq indent counts)))
+		    (if level
+			(setcdr level count)
+		      (push (cons indent count) counts)))
 		  (replace-match new-tag nil nil nil 1)
-		  (incf count)
 		  (when (and (/= delta 0)
 			     (rst-forward-line-strict
 			      1 (marker-position end-marker)))
