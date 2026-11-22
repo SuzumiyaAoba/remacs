@@ -1111,10 +1111,13 @@ fn absolute_mouse_pixel_position(
     position: Point<Pixels>,
     screen_left: i128,
     screen_top: i128,
+    content_left_offset: i128,
     content_top_offset: i128,
 ) -> (i128, i128) {
     (
-        screen_left.saturating_add(f32::from(position.x).round() as i128),
+        screen_left
+            .saturating_add(content_left_offset)
+            .saturating_add(f32::from(position.x).round() as i128),
         screen_top
             .saturating_add(content_top_offset)
             .saturating_add(f32::from(position.y).round() as i128),
@@ -2369,12 +2372,18 @@ impl EditorView {
         let geometry = self.geometry.as_ref()?;
         let bounds = window.bounds();
         let viewport = window.viewport_size();
+        let content_left_offset = ((f32::from(bounds.size.width)
+            - f32::from(viewport.width))
+            / 2.0)
+            .max(0.0)
+            .round() as i128;
         let content_top_offset =
             (f32::from(bounds.size.height) - f32::from(viewport.height)).round() as i128;
         let absolute = absolute_mouse_pixel_position(
             window.native_mouse_position(),
             geometry.frame_left,
             geometry.frame_top,
+            content_left_offset,
             content_top_offset,
         );
         let display_origin = geometry
@@ -2466,13 +2475,19 @@ impl Render for EditorView {
                                 .as_ref()
                                 .map(|geometry| (geometry.frame_left, geometry.frame_top))
                                 .unwrap_or((0, 0));
+                            let content_left_offset = ((f32::from(bounds.size.width)
+                                - f32::from(viewport.width))
+                                / 2.0)
+                                .max(0.0)
+                                .round() as i128;
                             let content_top_offset = (f32::from(bounds.size.height)
                                 - f32::from(viewport.height))
-                            .round() as i128;
+                                .round() as i128;
                             let absolute_position = absolute_mouse_pixel_position(
                                 mouse,
                                 screen_origin.0,
                                 screen_origin.1,
+                                content_left_offset,
                                 content_top_offset,
                             );
                             let current = (position, absolute_position, text_window_id);
@@ -2638,6 +2653,9 @@ impl Render for EditorView {
         );
         let pointer_screen_left = frame_left;
         let pointer_screen_top = frame_top;
+        let content_left_offset = ((f32::from(bounds.size.width) - f32::from(vp.width)) / 2.0)
+            .max(0.0)
+            .round() as i128;
         let content_top_offset =
             (f32::from(bounds.size.height) - f32::from(vp.height)).round() as i128;
         let geometry = GuiGeometry {
@@ -3006,6 +3024,7 @@ impl Render for EditorView {
                         event.position,
                         pointer_screen_left,
                         pointer_screen_top,
+                        content_left_offset,
                         content_top_offset,
                     );
                     let _ = this.tx.send_mouse_move(None, Some(absolute_position));
@@ -3156,6 +3175,7 @@ impl Render for EditorView {
                         event.position,
                         pointer_screen_left,
                         pointer_screen_top,
+                        content_left_offset,
                         content_top_offset,
                     );
                     let point = frame_content_point(event.position, window.viewport_size(), border);
@@ -4069,6 +4089,7 @@ impl Render for EditorView {
                                         event.position,
                                         pointer_screen_left,
                                         pointer_screen_top,
+                                        content_left_offset,
                                         content_top_offset,
                                     );
                                     let _ = mouse_face_exit_tx
