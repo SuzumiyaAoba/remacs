@@ -254,6 +254,27 @@ it for the end.")
 ;; Note: Ediff doesn't recognize multi-file patches that are separated
 ;; with the `Index:' line.  It treats them as a single-file patch.
 ;;
+
+(defun ediff--patch-target-candidates (filename directory)
+  "Find existing ancestor-relative alternatives for FILENAME in DIRECTORY."
+  (let* ((relative (file-relative-name filename directory))
+         (ancestor (file-name-directory (directory-file-name directory)))
+         candidates)
+    (when (and (not (file-name-absolute-p relative))
+               (not (string-prefix-p "../" relative)))
+      (while (and ancestor
+                  (not (equal ancestor
+                              (file-name-directory
+                               (directory-file-name ancestor)))))
+        (let ((candidate (expand-file-name relative ancestor)))
+          (when (and (not (equal candidate filename))
+                     (file-exists-p candidate)
+                     (not (file-directory-p candidate)))
+            (push candidate candidates)))
+        (setq ancestor
+              (file-name-directory (directory-file-name ancestor)))))
+    (nreverse candidates)))
+
 ;; Executes inside the patch buffer
 (defun ediff-fixup-patch-map (filename)
   (setq filename (expand-file-name filename))
@@ -438,7 +459,7 @@ Please advise:
 		 (f2-exists (setcar session-file-object file2))
 		 (f1-exists (setcar session-file-object file1))
 		 (t
-                  ;; TODO: Often for multi-patches the file doesn't exist
+                  ;; Rebase inferred paths at parent directories when they do not exist.
                   ;; because the directory part is wrong; for instance, if the
                   ;; patch needs to be applied into
                   ;; (expand-file-name "lisp/vc/ediff-ptch.el" source-directory)
@@ -469,12 +490,22 @@ are two possible targets for this %spatch.  However, these files do not exist."
                   (when (and (string= file1 file2)
                              (y-or-n-p (format "Create %s?" file1)))
                     (write-region (point-min) (point-min) file1))
-		  (let ((directory t)
-			target)
+		  (let* ((directory t)
+			 (suggested-target
+			  (or (car (ediff--patch-target-candidates file1 actual-dir))
+			      (car (ediff--patch-target-candidates file2 actual-dir))))
+			 target)
 		    (while directory
-		      (setq target (read-file-name
-				    "Please enter a patch target: "
-				    actual-dir actual-dir t))
+		      (setq target
+			    (read-file-name
+			     (if suggested-target
+				 (format "Please enter a patch target (possible match: %s): "
+					 suggested-target)
+			       "Please enter a patch target: ")
+			     (if suggested-target
+				 (file-name-directory suggested-target)
+			       actual-dir)
+			     (or suggested-target actual-dir) t))
 		      (if (not (file-directory-p target))
 			  (setq directory nil)
 			(beep)
