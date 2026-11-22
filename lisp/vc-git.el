@@ -713,7 +713,7 @@ or an empty string if none."
                                (?A 'added)
                                (?C 'added)
                                (?D 'removed)
-                               (?U 'edited)  ;; FIXME
+                               (?U 'conflict)
                                (?T 'edited)) ;; FIXME
               (vc-git-create-extra-fileinfo old-perm new-perm)))))))
     ;; If we had files but now we don't, it's time to stop.
