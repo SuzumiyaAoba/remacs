@@ -1798,6 +1798,29 @@ Example: mouse clicks in the fringe come with a position in
 don't look up that position's properties!  Likewise for
 the other event areas.")
 
+(defun mouse--posn-property-with-string-category (pos property window)
+  "Look up PROPERTY at POS without inheriting the buffer's category.
+WINDOW is the window containing POS."
+  (let ((property-and-overlay (get-char-property-and-overlay pos property window)))
+    (if (cdr property-and-overlay)
+        (car property-and-overlay)
+      (with-current-buffer
+          (cond ((windowp window) (window-buffer window))
+                ((bufferp window) window)
+                (t (current-buffer)))
+        (let* ((position (if (markerp pos) (marker-position pos) pos))
+               (text (buffer-substring position
+                                       (min (1+ position) (point-max)))))
+          (remove-text-properties 0 (length text) '(category nil) text)
+          (let* ((properties (text-properties-at 0 text))
+                 (value (get-text-property 0 property text)))
+            (if (plist-member properties property)
+                value
+              (or value
+                  (and (not (eq property 'category))
+                       (boundp 'default-text-properties)
+                       (plist-get default-text-properties property))))))))))
+
 (defun mouse-posn-property (pos property)
   "Look for a property at click position.
 POS may be either a buffer position or a click position like
@@ -1812,10 +1835,6 @@ because such events do not contain buffer positions."
   (if (consp pos)
       (let ((w (posn-window pos)) (pt (posn-point pos))
 	    (str (posn-string pos)))
-        ;; FIXME: When STR has a `category' property and there's another
-        ;; `category' property at PT, we should probably disregard the
-        ;; `category' property at PT while doing the (get-char-property
-        ;; pt property w)!
 	(or (and str
                  (< (cdr str) (length (car str)))
 		 (get-text-property (cdr str) property (car str)))
@@ -1825,7 +1844,12 @@ because such events do not contain buffer positions."
                             ;; events because they don't describe the
                             ;; position of the click.
                             mouse-event-areas-with-no-buffer-positions))
-                 (get-char-property pt property w))))
+                 (if (and str
+                          (< (cdr str) (length (car str)))
+                          (plist-member (text-properties-at (cdr str) (car str))
+                                        'category))
+                     (mouse--posn-property-with-string-category pt property w)
+                   (get-char-property pt property w)))))
     (get-char-property pos property)))
 
 (defun mouse-on-link-p (pos)
