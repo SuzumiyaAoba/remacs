@@ -218,16 +218,13 @@ This can be toggled with `ediff-toggle-filename-truncation'."
   :type 'hook)
 
 (defcustom ediff-before-session-group-setup-hooks
-  nil ;FIXME: Bad name (should be -hook or -functions) and never run??
+  nil
   "Hook run before Ediff arranges the window for group-level operations.
 It is used by commands such as `ediff-directories'.
 This hook can be used to save the previous window config, which can be restored
 on `ediff-quit', `ediff-suspend', or `ediff-quit-session-group-hook'."
   :type 'hook
   :group 'ediff-hook)
-;; Because this variable is apparently never used, it's marked as
-;; obsolete without replacement.
-(make-obsolete-variable 'ediff-before-session-group-setup-hooks nil "27.1")
 
 (defcustom ediff-after-session-group-setup-hook nil
   "Hooks run just after a meta-buffer controlling a session group is run.
@@ -780,6 +777,8 @@ behavior."
 (defun ediff-prepare-meta-buffer (action-func meta-list
 				              meta-buffer-name redraw-function
 				              jobname &optional startup-hooks)
+  (unless (eq jobname 'ediff-registry)
+    (run-hooks 'ediff-before-session-group-setup-hooks))
   (let* ((meta-buffer-name
 	  (ediff-unique-buffer-name meta-buffer-name "*"))
 	 (meta-buffer (get-buffer-create meta-buffer-name)))
