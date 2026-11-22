@@ -146,27 +146,27 @@ If set, it overrides the setting of `mml2015-sign-with-sender'."
   ;; misdesigned libraries like PGG, which have no ability to do that.  So, I
   ;; think it should not have descriptive documentation.''
   ;;
-  ;; This function doesn't handle NotDashEscaped correctly.  EasyPG handles it
-  ;; correctly.
-  ;; http://thread.gmane.org/gmane.emacs.gnus.general/66062/focus=66082 [dead link]
-  ;; http://thread.gmane.org/gmane.emacs.gnus.general/65087/focus=65109 [dead link]
-  (goto-char (point-min))
-  (forward-line)
-  ;; We need to be careful not to strip beyond the armor headers.
-  ;; Previously, an attacker could replace the text inside our
-  ;; markup with trailing garbage by injecting whitespace into the
-  ;; message.
-  (while (looking-at "Hash:")		; The only header allowed in cleartext
-    (forward-line))			; signatures according to RFC2440.
-  (when (looking-at "[\t ]*$")
-    (forward-line))
-  (delete-region (point-min) (point))
-  (if (re-search-forward "^-----BEGIN PGP SIGNATURE-----" nil t)
-      (delete-region (match-beginning 0) (point-max)))
-  (goto-char (point-min))
-  (while (re-search-forward "^- " nil t)
-    (replace-match "" t t)
-    (forward-line 1)))
+  (let ((dash-escaped t))
+    (goto-char (point-min))
+    (forward-line)
+    ;; We need to be careful not to strip beyond the armor headers.
+    ;; Previously, an attacker could replace the text inside our markup with
+    ;; trailing garbage by injecting whitespace into the message.
+    (while (or (looking-at "Hash:")
+               (looking-at "NotDashEscaped:"))
+      (when (looking-at "NotDashEscaped:")
+        (setq dash-escaped nil))
+      (forward-line))
+    (when (looking-at "[\t ]*$")
+      (forward-line))
+    (delete-region (point-min) (point))
+    (if (re-search-forward "^-----BEGIN PGP SIGNATURE-----" nil t)
+        (delete-region (match-beginning 0) (point-max)))
+    (when dash-escaped
+      (goto-char (point-min))
+      (while (re-search-forward "^- " nil t)
+        (replace-match "" t t)
+        (forward-line 1))))
 
 ;;; mailcrypt wrapper
 
