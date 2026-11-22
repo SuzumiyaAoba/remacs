@@ -3474,31 +3474,57 @@ when the message is already `Cc'ed to the recipient."
   :link '(custom-manual "(message)Message Headers")
   :type '(repeat sexp))
 
+(defun message--normalized-header-addresses (header)
+  "Return case-folded email addresses found in HEADER."
+  (delq nil
+        (mapcar (lambda (components)
+                  (let ((address (cadr components)))
+                    (and (stringp address) (downcase address))))
+                (mail-extract-address-components header t))))
+
 (defun message-carefully-insert-headers (headers)
   "Insert the HEADERS, an alist, into the message buffer.
 Does not insert the headers when they are already present there
 or in the synonym headers, defined by `message-header-synonyms'."
-  ;; FIXME: Should compare only the address and not the full name.  Comparison
-  ;; should be done case-folded (and with `string=' rather than
-  ;; `string-match').
-  ;; (mail-strip-quoted-names "Foo Bar <foo@bar>, bla@fasel (Bla Fasel)")
   (dolist (header headers)
     (let* ((header-name (symbol-name (car header)))
 	   (new-header (cdr header))
+	   (new-addresses (message--normalized-header-addresses new-header))
 	   (synonyms (cl-loop for synonym in message-header-synonyms
 			      when (memq (car header) synonym) return synonym))
+	   (old-headers
+	    (mapcar (lambda (synonym)
+		      (cons synonym
+			    (let ((value (mail-fetch-field (symbol-name synonym))))
+			      (and value (message--normalized-header-addresses value))))
+		    synonyms))
 	   (old-header
-	    (cl-loop for synonym in synonyms
-		     for old-header = (mail-fetch-field (symbol-name synonym))
-		     when (and old-header (string-match new-header old-header))
-		     return synonym)))
+	    (when (and new-addresses
+		       (cl-every
+			(lambda (address)
+			  (cl-some
+			   (lambda (old-header)
+			     (cl-some (lambda (old-address)
+				        (string= address old-address))
+				      (cdr old-header)))
+			   old-headers))
+			new-addresses))
+	      (car (cl-find-if
+		    (lambda (old-header)
+		      (cl-some
+		       (lambda (address)
+			 (cl-some (lambda (old-address)
+				    (string= address old-address))
+				  (cdr old-header)))
+		       new-addresses))
+		    old-headers)))))
       (if old-header
 	  (message "already have `%s' in `%s'" new-header old-header)
 	(when (and (message-position-on-field header-name)
 		   (setq old-header (mail-fetch-field header-name))
 		   (not (string-match "\\` *\\'" old-header)))
 	  (insert ", "))
-	(insert new-header)))))
+	(insert new-header))))))
 
 (defun message-widen-reply ()
   "Widen the reply to include maximum recipients."
