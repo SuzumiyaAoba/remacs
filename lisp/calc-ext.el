@@ -2141,7 +2141,6 @@ calc-kill calc-kill-region calc-yank))))
   (or (integerp a)
       (memq (car-safe a) '(frac float cplx polar
 			   hms date sdev intv mod vec
-                           ;; FIXME: Math-objvecp does not include this one!
                            incomplete))))
 
 ;;; True if A is an object not composed of sub-formulas .  [P x] [Public]

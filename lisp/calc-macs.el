@@ -143,7 +143,7 @@
   (or (not (consp a))
       (memq (car a)
 	    '(frac float cplx polar hms date
-	      sdev intv mod vec))))
+	      sdev intv mod vec incomplete))))
 
 ;;; Compute the negative of A.  [O O; o o] [Public]
 (defsubst Math-integer-neg (a)
