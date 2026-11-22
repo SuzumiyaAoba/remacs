@@ -535,6 +535,43 @@ pub(super) fn mode_line_mouse_position(
     })
 }
 
+pub(super) fn mode_line_mouse_position_with_window(
+    grid: &Grid,
+    point: Point<Pixels>,
+    cell_width: Pixels,
+    scale_factor: f32,
+    window: &mut Window,
+) -> Option<MousePosition> {
+    let mut position = mode_line_mouse_position(grid, point, cell_width, scale_factor)?;
+    let mode_line = grid
+        .mode_lines
+        .iter()
+        .find(|mode_line| Some(mode_line.window_id) == position.window_id)?;
+    if let Some((left, right)) = mode_line.buffer_name_range {
+        let text = grid.rows.get(position.row)?;
+        let line = shape_grid_row(grid, position.row, window, text);
+        let left = grid_byte_index_at_column(text, left);
+        let right = grid_byte_index_at_column(text, right);
+        position.mode_line_buffer_name =
+            point.x >= line.x_for_index(left) && point.x < line.x_for_index(right);
+    }
+    Some(position)
+}
+
+fn grid_byte_index_at_column(text: &str, target_column: usize) -> usize {
+    let mut column = 0usize;
+    for (byte, character) in text.char_indices() {
+        if column >= target_column {
+            return byte;
+        }
+        column = column.saturating_add(super::gui_display_char_width(character));
+        if column >= target_column {
+            return byte + character.len_utf8();
+        }
+    }
+    text.len()
+}
+
 pub(super) fn header_line_mouse_position(
     grid: &Grid,
     point: Point<Pixels>,

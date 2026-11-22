@@ -2802,11 +2802,12 @@ impl Render for EditorView {
                         border,
                     )
                     .and_then(|point| {
-                        input::mode_line_mouse_position(
+                        input::mode_line_mouse_position_with_window(
                             &this.grid,
                             point,
                             cell_width,
                             window.scale_factor(),
+                            window,
                         )
                     })
                 });
@@ -2918,11 +2919,12 @@ impl Render for EditorView {
                         window,
                     )
                     .or_else(|| {
-                        input::mode_line_mouse_position(
+                        input::mode_line_mouse_position_with_window(
                             &left_mouse_down_grid,
                             point,
                             cell_width,
                             window.scale_factor(),
+                            window,
                         )
                     }) {
                         this.mouse_down_positions
@@ -3121,11 +3123,12 @@ impl Render for EditorView {
                                 window,
                             )
                             .or_else(|| {
-                                input::mode_line_mouse_position(
+                                input::mode_line_mouse_position_with_window(
                                     &left_mouse_up_grid,
                                     point,
                                     cell_width,
                                     window.scale_factor(),
+                                    window,
                                 )
                             })
                         });
@@ -3226,11 +3229,12 @@ impl Render for EditorView {
                                     &down_grid, point, cell_width, window,
                                 )
                                 .or_else(|| {
-                                    input::mode_line_mouse_position(
+                                    input::mode_line_mouse_position_with_window(
                                         &down_grid,
                                         point,
                                         cell_width,
                                         window.scale_factor(),
+                                        window,
                                     )
                                 })
                             }) {
@@ -3287,11 +3291,12 @@ impl Render for EditorView {
                                     &up_grid, point, cell_width, window,
                                 )
                                 .or_else(|| {
-                                    input::mode_line_mouse_position(
+                                    input::mode_line_mouse_position_with_window(
                                         &up_grid,
                                         point,
                                         cell_width,
                                         window.scale_factor(),
+                                        window,
                                     )
                                 })
                             });
@@ -3431,11 +3436,12 @@ impl Render for EditorView {
                         window,
                     )
                     .or_else(|| {
-                        input::mode_line_mouse_position(
+                        input::mode_line_mouse_position_with_window(
                             &scroll_grid,
                             point,
                             cell_width,
                             window.scale_factor(),
+                            window,
                         )
                     })
                     .or_else(|| {
