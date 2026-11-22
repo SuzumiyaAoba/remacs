@@ -939,6 +939,7 @@ fn unscrolled_column_ranges(grid: &Grid, row: usize, width: usize) -> Vec<(usize
 
 #[derive(Clone, Copy)]
 struct ScrollBarDrag {
+    button: MouseButton,
     window_id: usize,
     orientation: GridScrollBarOrientation,
     pointer_offset: f32,
@@ -1147,13 +1148,58 @@ fn scroll_bar_hit(grid: &Grid, point: Point<Pixels>) -> Option<(GridScrollBar, f
     })
 }
 
-fn scroll_bar_offset(bar: &GridScrollBar, point: Point<Pixels>, pointer_offset: f32) -> usize {
-    let axis = scroll_bar_axis(bar, point);
-    let track_length = match bar.orientation {
+fn scroll_bar_track_length(bar: &GridScrollBar) -> usize {
+    match bar.orientation {
         GridScrollBarOrientation::Vertical => bar.height,
         GridScrollBarOrientation::Horizontal => bar.width,
-    };
-    let travel = track_length.saturating_sub(bar.thumb_size);
+    }
+}
+
+fn scroll_bar_travel(bar: &GridScrollBar) -> usize {
+    scroll_bar_track_length(bar).saturating_sub(bar.thumb_size)
+}
+
+fn scroll_bar_thumb_contains(bar: &GridScrollBar, point: Point<Pixels>) -> bool {
+    let axis = scroll_bar_axis(bar, point);
+    axis >= bar.thumb_start as f32
+        && axis < bar.thumb_start.saturating_add(bar.thumb_size) as f32
+}
+
+fn scroll_bar_current_offset(bar: &GridScrollBar) -> usize {
+    let travel = scroll_bar_travel(bar);
+    if travel == 0 || bar.max_offset == 0 {
+        return 0;
+    }
+    ((bar.thumb_start as f32 / travel as f32) * bar.max_offset as f32)
+        .round()
+        .clamp(0.0, bar.max_offset as f32) as usize
+}
+
+fn scroll_bar_page_size(bar: &GridScrollBar) -> usize {
+    let travel = scroll_bar_travel(bar);
+    if travel == 0 || bar.max_offset == 0 {
+        return 0;
+    }
+    // One thumb length represents one viewport in the scrollbar's offset
+    // range (max_offset / travel).
+    ((bar.max_offset as f32 * bar.thumb_size as f32 / travel as f32)
+        .round() as usize)
+        .clamp(1, bar.max_offset)
+}
+
+fn scroll_bar_track_click_offset(bar: &GridScrollBar, point: Point<Pixels>) -> usize {
+    let current = scroll_bar_current_offset(bar);
+    let page = scroll_bar_page_size(bar);
+    if scroll_bar_axis(bar, point) < bar.thumb_start as f32 {
+        current.saturating_sub(page)
+    } else {
+        current.saturating_add(page).min(bar.max_offset)
+    }
+}
+
+fn scroll_bar_offset(bar: &GridScrollBar, point: Point<Pixels>, pointer_offset: f32) -> usize {
+    let axis = scroll_bar_axis(bar, point);
+    let travel = scroll_bar_travel(bar);
     if travel == 0 || bar.max_offset == 0 {
         return 0;
     }
@@ -3096,26 +3142,38 @@ impl Render for EditorView {
                     if let Some((bar, pointer_offset)) =
                         scroll_bar_hit(&left_mouse_down_grid, point)
                     {
-                        let modifiers = mouse_modifier_bits(
-                            &event.modifiers,
-                            modifier_mapping,
-                            left_mouse_down_modifiers.get(),
-                        );
-                        let start_position = scroll_bar_mouse_position(
-                            &bar,
-                            point,
-                            pointer_offset,
-                            window.scale_factor(),
-                        );
-                        this.scroll_bar_drag = Some(ScrollBarDrag {
-                            window_id: bar.window_id,
-                            orientation: bar.orientation,
-                            pointer_offset,
-                            start_position,
-                            click_count: event.click_count,
-                            modifiers,
-                            dragged: false,
-                        });
+                        if scroll_bar_thumb_contains(&bar, point) {
+                            let modifiers = mouse_modifier_bits(
+                                &event.modifiers,
+                                modifier_mapping,
+                                left_mouse_down_modifiers.get(),
+                            );
+                            let start_position = scroll_bar_mouse_position(
+                                &bar,
+                                point,
+                                pointer_offset,
+                                window.scale_factor(),
+                            );
+                            this.scroll_bar_drag = Some(ScrollBarDrag {
+                                button: MouseButton::Left,
+                                window_id: bar.window_id,
+                                orientation: bar.orientation,
+                                pointer_offset,
+                                start_position,
+                                click_count: event.click_count,
+                                modifiers,
+                                dragged: false,
+                            });
+                        } else {
+                            let _ = left_mouse_down_tx.send(GuiEvent::ScrollBar {
+                                window_id: bar.window_id,
+                                orientation: bar.orientation,
+                                offset: scroll_bar_track_click_offset(&bar, point),
+                                max_offset: bar.max_offset,
+                                text_width: bar.text_width,
+                                mouse: None,
+                            });
+                        }
                         window.prevent_default();
                         cx.stop_propagation();
                         return;
@@ -3225,7 +3283,10 @@ impl Render for EditorView {
                         cx.stop_propagation();
                         return;
                     }
-                    if !event.dragging() {
+                    let scroll_bar_dragging = this
+                        .scroll_bar_drag
+                        .is_some_and(|drag| event.pressed_button == Some(drag.button));
+                    if !event.dragging() && !scroll_bar_dragging {
                         return;
                     }
                     if event.pressed_button == Some(MouseButton::Left)
@@ -3247,6 +3308,9 @@ impl Render for EditorView {
                         return;
                     }
                     if let Some(drag) = this.scroll_bar_drag {
+                        if event.pressed_button != Some(drag.button) {
+                            return;
+                        }
                         let Some(point) = point else {
                             return;
                         };
@@ -3371,7 +3435,11 @@ impl Render for EditorView {
                         cx.stop_propagation();
                         return;
                     }
-                    if let Some(drag) = this.scroll_bar_drag.take() {
+                    if let Some(drag) = this
+                        .scroll_bar_drag
+                        .filter(|drag| drag.button == MouseButton::Left)
+                    {
+                        this.scroll_bar_drag = None;
                         if let Some(point) =
                             frame_content_point(event.position, window.viewport_size(), border)
                             && let Some(bar) = this.grid.scroll_bars.iter().find(|bar| {
@@ -3524,6 +3592,36 @@ impl Render for EditorView {
                                     return;
                                 }
                             }
+                            if button == MouseButton::Middle
+                                && let Some(point) = point
+                                && let Some((bar, pointer_offset)) = scroll_bar_hit(&down_grid, point)
+                                && scroll_bar_thumb_contains(&bar, point)
+                            {
+                                let modifiers = mouse_modifier_bits(
+                                    &event.modifiers,
+                                    modifier_mapping,
+                                    down_modifiers.get(),
+                                );
+                                let start_position = scroll_bar_mouse_position(
+                                    &bar,
+                                    point,
+                                    pointer_offset,
+                                    window.scale_factor(),
+                                );
+                                this.scroll_bar_drag = Some(ScrollBarDrag {
+                                    button,
+                                    window_id: bar.window_id,
+                                    orientation: bar.orientation,
+                                    pointer_offset,
+                                    start_position,
+                                    click_count: event.click_count,
+                                    modifiers,
+                                    dragged: false,
+                                });
+                                window.prevent_default();
+                                cx.stop_propagation();
+                                return;
+                            }
                             if let Some(position) = point.and_then(|point| {
                                 input::mouse_position_for_point_with_cell_width(
                                     &down_grid, point, cell_width, window,
@@ -3558,6 +3656,17 @@ impl Render for EditorView {
                     element = element.on_mouse_up(
                         button,
                         cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                            if this
+                                .scroll_bar_drag
+                                .is_some_and(|drag| drag.button == button)
+                            {
+                                this.scroll_bar_drag = None;
+                                if button == MouseButton::Middle {
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+                                    return;
+                                }
+                            }
                             let down_position = this.mouse_down_positions.remove(&button);
                             if this.consumed_mouse_buttons.remove(&button) {
                                 if button == MouseButton::Middle
@@ -3624,6 +3733,15 @@ impl Render for EditorView {
                         element = element.on_mouse_up_out(
                             button,
                             cx.listener(move |this, _event: &MouseUpEvent, window, cx| {
+                                if this
+                                    .scroll_bar_drag
+                                    .is_some_and(|drag| drag.button == button)
+                                {
+                                    this.scroll_bar_drag = None;
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+                                    return;
+                                }
                                 this.mouse_down_positions.remove(&button);
                                 if this.middle_tab_close_index.take().is_some() {
                                     this.consumed_mouse_buttons.remove(&button);
