@@ -6666,17 +6666,32 @@ fn f_pos_visible_in_window_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
         } else {
             1
         };
+        let default_y = row
+            .saturating_add(header_rows)
+            .saturating_add(tab_rows)
+            .saturating_mul(line_height);
+        let y = if frame
+            .as_ref()
+            .is_some_and(|frame| frame_is_graphical(i, frame))
+        {
+            crate::frontend::window_text_pixel_rows(i, &w)
+                .map(|(prefix_height, row_heights)| {
+                    row_heights
+                        .iter()
+                        .take(row)
+                        .fold(prefix_height, |total, height| total.saturating_add(*height))
+                })
+                .unwrap_or(default_y)
+        } else {
+            default_y
+        };
         Ok(Value::list(vec![
             Value::Int(
                 (left_fringe
                     + left_margin.saturating_mul(char_width)
                     + column.saturating_mul(char_width)) as i128,
             ),
-            Value::Int(
-                row.saturating_add(header_rows)
-                    .saturating_add(tab_rows)
-                    .saturating_mul(line_height) as i128,
-            ),
+            Value::Int(y as i128),
         ]))
     } else {
         Ok(Value::t())

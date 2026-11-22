@@ -11305,15 +11305,73 @@ fn window_has_visible_display_property(i: &Interp, window: &crate::editor::Windo
         })
 }
 
+fn window_has_variable_line_metrics(i: &Interp, window: &crate::editor::WindowRef) -> bool {
+    let buffer_id = window.borrow().buffer;
+    let Some(frame) = crate::editor::frame_of_window(i, window) else {
+        return false;
+    };
+    if crate::editor::frame_is_graphical(i, &frame) {
+        let buffer_spacing = buffer_setting(i, "line-spacing", buffer_id);
+        let frame_spacing = i
+            .q_soft("line-spacing")
+            .map(|property| {
+                crate::lisp::eval::plist_get_v(
+                    &frame.borrow().params,
+                    &Value::Sym(property),
+                )
+            })
+            .unwrap_or(Value::Nil);
+        let spacing = if buffer_spacing.is_nil() {
+            frame_spacing
+        } else {
+            buffer_spacing
+        };
+        if line_spacing_pixels(&spacing, crate::editor::frame_char_height(i, &frame).max(1))
+            .is_some_and(|pixels| pixels > 0)
+        {
+            return true;
+        }
+    } else {
+        return false;
+    }
+    let line_spacing = i.q_soft("line-spacing");
+    let line_height = i.q_soft("line-height");
+    if line_spacing.is_none() && line_height.is_none() {
+        return false;
+    }
+    let Some(buffer) = i.buffers.get(buffer_id) else {
+        return false;
+    };
+    let bb = buffer.borrow();
+    if bb.text.props.borrow().iter().any(|property| {
+        Some(property.prop) == line_spacing || Some(property.prop) == line_height
+    }) {
+        return true;
+    }
+    let win = Value::Window(window.clone());
+    bb.overlays.iter().any(|overlay| {
+        overlay.buffer == Some(buffer_id)
+            && overlay.start < overlay.end
+            && overlay.matches_window(i, &win)
+            && (line_spacing.is_some_and(|property| {
+                !overlay.property(i, &Value::Sym(property)).is_nil()
+            }) || line_height.is_some_and(|property| {
+                !overlay.property(i, &Value::Sym(property)).is_nil()
+            }))
+    })
+}
+
 /// Return the rendered pixel heights of WINDOW's decoration rows and text
-/// rows when visible display properties may make rows nonuniform. Position
-/// queries then use the same measurements as the GUI painter without
+/// rows when display properties or line metrics may make rows nonuniform.
+/// Position queries then use the same measurements as the GUI painter without
 /// rebuilding a grid for ordinary text-only windows.
 pub(crate) fn window_text_pixel_rows(
     i: &Interp,
     window: &crate::editor::WindowRef,
 ) -> Option<(usize, Vec<usize>)> {
-    if !window_has_visible_display_property(i, window) {
+    if !window_has_visible_display_property(i, window)
+        && !window_has_variable_line_metrics(i, window)
+    {
         return None;
     }
     let frame = crate::editor::frame_of_window(i, window)?;
@@ -11330,6 +11388,10 @@ pub(crate) fn window_text_pixel_rows(
         .window_text_areas
         .iter()
         .find(|area| area.window_id == window_id)?;
+    let window_metrics = grid
+        .window_row_heights
+        .iter()
+        .find(|metrics| metrics.window_id == window_id);
     let line_height = grid.default_line_height.max(1);
     let row_height = |row: usize| {
         grid.row_heights
@@ -11341,9 +11403,14 @@ pub(crate) fn window_text_pixel_rows(
     let prefix_height = (window_top..area.top)
         .map(row_height)
         .fold(0usize, usize::saturating_add);
-    let text_rows = (0..area.rows)
-        .map(|row| row_height(area.top.saturating_add(row)))
-        .collect();
+    let text_rows = window_metrics
+        .filter(|metrics| metrics.top == area.top)
+        .map(|metrics| metrics.heights.iter().take(area.rows).copied().collect())
+        .unwrap_or_else(|| {
+            (0..area.rows)
+                .map(|row| row_height(area.top.saturating_add(row)))
+                .collect()
+        });
     Some((prefix_height, text_rows))
 }
 
