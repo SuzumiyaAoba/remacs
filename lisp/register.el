@@ -617,26 +617,42 @@ With a prefix argument, prompt for BUFFER as well."
                 (cl-generic-generalizers type))))))
      (cl--generic-method-specializers method))))
 
+(defun register--generic-arg-specializers (val generic)
+  "Return the ordered specializers for VAL from GENERIC's first argument."
+  (let ((methods (cl--generic-method-table generic))
+        (specializers nil))
+    (dolist (dispatch (cl--generic-dispatches generic))
+      (when (equal (car dispatch) 0)
+        (dolist (generalizer (cdr dispatch))
+          (let* ((tagcode
+                  (funcall
+                   (cl--generic-generalizer-tagcode-function generalizer)
+                   'arg))
+                 (bindings+code
+                  (when (eq tagcode :need-specializers)
+                    (cl--generic--tagcode-with-specializers
+                     generalizer (car dispatch) nil)))
+                 (bindings (car-safe bindings+code))
+                 (tagcode (if bindings+code (cdr bindings+code) tagcode))
+                 (extra-args (and bindings+code (list (caar bindings))))
+                 (tag (eval `(let* ((methods ',methods)
+                                    (arg ',val)
+                                    ,@bindings)
+                               ,tagcode)
+                            t))
+                 (specializers-function
+                  (cl--generic-generalizer-specializers-function generalizer)))
+            (setq specializers
+                  (append specializers
+                          (apply specializers-function (cons tag extra-args))))))))
+    specializers))
+
 (defun register--get-method-type (val genfun &optional other-args-type)
-  ;; Try and return the specializer used in the most specific method
-  ;; applicable to argument VAL in generic function GENFUN.
-  ;; VAL is assumed to be the first argument and OTHER-ARGS-TYPE
-  ;; is a list of types for the other arguments.
-  ;; Go through all the types of VAL (from most specific to least specific)
-  ;; and return the first for which we can find a method with that
-  ;; type as specializer.
-  ;; FIXME: This is ad-hoc and does not handle all possible cases.
-  ;; We should instead do what `cl-generic' does during dispatch,
-  ;; i.e. get the set of generalizers used for the first arg of this generic
-  ;; function, use them to compute the TAGs corresponding to VAL (which
-  ;; we approximate here in TYPE) and then use those TAGs to compute the
-  ;; corresponding set of specializers (which we approximate here in TYPES),
-  ;; then look for the best matching method.
-  (let* ((type (or (oclosure-type val) (cl-type-of val)))
-         (methods (cl--generic-method-table (cl--generic genfun)))
-	 (types (cl--class-allparents (cl--find-class type))))
-    (if (eq type 'cons) (push `(head ,(car val)) types))
-    (push `(eql ',val) types)
+  ;; Return the specializer used in the most specific method applicable to VAL.
+  ;; VAL is the first argument; OTHER-ARGS-TYPE describes the remaining args.
+  (let* ((generic (cl--generic genfun))
+         (methods (cl--generic-method-table generic))
+         (types (register--generic-arg-specializers val generic)))
     (while
         (and types
              (not
@@ -658,7 +674,7 @@ With a prefix argument, prompt for BUFFER as well."
     (car types)))
 
 (defun register--jumpable-p (regval)
-  "Return non-nil if `register-val-insert' is implemented for REGVAL."
+  "Return non-nil if `register-val-jump-to' is implemented for REGVAL."
   (pcase (register--get-method-type regval 'register-val-jump-to '(t))
     ;; The only applicable method is one with the `t' specializer,
     ;; i.e. the default method which signals an error.
