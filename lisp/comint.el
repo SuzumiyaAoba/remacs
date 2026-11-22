@@ -3332,9 +3332,28 @@ interpreter (e.g., the percent notation of cmd.exe on Windows)."
     name))
 
 (defun comint--match-partial-filename ()
-  "Return the filename at point as-is, or nil if none is found.
-See `comint-word'."
-  (comint-word comint-file-name-chars))
+  "Return the filename at point, or nil if none is found.
+If point is inside a quoted argument, return its contents without the
+opening quote.  Match data covers the complete argument so that completion
+can preserve its quoting."
+  (let* ((here (point))
+         (state (save-match-data (syntax-ppss here)))
+         (quote-start
+          (and (memq (nth 3 state) '(?\" ?'))
+               (nth 8 state))))
+    (if quote-start
+        (let ((beginning quote-start))
+          ;; A shell word can combine unquoted and quoted pieces, as in
+          ;; ~/some" directory.  Include any filename prefix before the
+          ;; quoted part in the completion range.
+          (save-excursion
+            (goto-char quote-start)
+            (when (comint-word comint-file-name-chars)
+              (setq beginning (match-beginning 0))))
+          (set-match-data (list beginning here))
+          (concat (buffer-substring-no-properties beginning quote-start)
+                  (buffer-substring-no-properties (1+ quote-start) here)))
+      (comint-word comint-file-name-chars))))
 
 (defun comint--unquote&requote-argument (qstr &optional upos)
   (unless upos (setq upos 0))
@@ -3373,7 +3392,8 @@ See `comint-word'."
   "Return the unquoted&expanded filename at point, or nil if none is found.
 Environment variables are substituted.  See `comint-word'."
   (let ((filename (comint--match-partial-filename)))
-    (and filename (comint--unquote-argument filename))))
+    (and filename
+         (comint--unquote-argument (match-string-no-properties 0)))))
 
 (defun comint-quote-filename (filename)
   "Return FILENAME with magic characters quoted.
