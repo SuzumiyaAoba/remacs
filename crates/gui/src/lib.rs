@@ -2844,6 +2844,8 @@ fn set_frame_z_group_window(window: &Window, z_group: Option<&str>, child: bool)
 fn mac_frame_window_level(z_group: Option<&str>, _child: bool) -> NSInteger {
     match z_group {
         Some("above") => 3,
+        // Keep `orderFront:` within the below group, behind normal windows.
+        Some("below") => -1,
         _ => 0,
     }
 }
@@ -2857,7 +2859,7 @@ mod mac_frame_window_level_tests {
         assert_eq!(mac_frame_window_level(None, true), 0);
         assert_eq!(mac_frame_window_level(None, false), 0);
         assert_eq!(mac_frame_window_level(Some("above"), true), 3);
-        assert_eq!(mac_frame_window_level(Some("below"), true), 0);
+        assert_eq!(mac_frame_window_level(Some("below"), true), -1);
     }
 }
 
