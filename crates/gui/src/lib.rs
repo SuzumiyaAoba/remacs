@@ -33,6 +33,7 @@ unsafe extern "C" {
 #[link(name = "user32")]
 unsafe extern "system" {
     fn MessageBeep(u_type: u32) -> i32;
+    fn SetCursorPos(x: i32, y: i32) -> i32;
     fn GetWindowLongW(hwnd: *mut std::ffi::c_void, index: i32) -> i32;
     fn SetWindowLongW(hwnd: *mut std::ffi::c_void, index: i32, value: i32) -> i32;
     fn SetWindowPos(

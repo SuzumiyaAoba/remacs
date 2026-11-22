@@ -593,7 +593,7 @@ pub(crate) fn warp_mouse_absolute(
     x: i128,
     y: i128,
 ) -> Result<(), Flow> {
-    if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, frame) {
+    if !crate::editor::frame_is_graphical(i, frame) {
         return Ok(());
     }
     let backend = i
@@ -616,7 +616,7 @@ fn warp_mouse_in_frame(
     frame: &FrameRef,
     coordinates: impl FnOnce(&Interp, &FrameRef) -> (i128, i128),
 ) -> EvalResult {
-    if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, frame) {
+    if !crate::editor::frame_is_graphical(i, frame) {
         return Ok(Value::Nil);
     }
     let backend = i
@@ -668,7 +668,7 @@ pub(super) fn f_set_mouse_absolute_pixel_position(
     a: crate::lisp::Argv,
 ) -> EvalResult {
     let frame = crate::editor::frame_live(i, &Value::Nil)?;
-    if !cfg!(target_os = "macos") || !crate::editor::frame_is_graphical(i, &frame) {
+    if !crate::editor::frame_is_graphical(i, &frame) {
         return Ok(Value::Nil);
     }
     let x = mouse_coordinate(i, &a[0])?;
