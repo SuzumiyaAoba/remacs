@@ -1351,12 +1351,19 @@ It is an error to supply both or neither."
   (let ((state-file (vc-hg--histedit-state-file file)))
     (and state-file (file-exists-p state-file))))
 
+(defun vc-hg--run-histedit (&rest arguments)
+  "Run hg histedit with non-interactive conflict handling."
+  (let ((process-environment (copy-sequence process-environment)))
+    ;; HGMERGE takes precedence over merge-patterns, which otherwise can
+    ;; replace histedit's `ui.merge' setting with an interactive tool.
+    (setenv "HGMERGE" "internal:fail")
+    (apply #'vc-hg-command nil 1 nil "--config=extensions.histedit="
+           arguments)))
+
 (defun vc-hg--continue-histedit (file)
   (let ((default-directory (vc-hg-root (or file default-directory))))
     (unless (zerop
-             (vc-hg-command nil 1 nil
-                            "--config=extensions.histedit="
-                            "histedit" "--continue"))
+             (vc-hg--run-histedit "histedit" "--continue"))
       (user-error "Mercurial histedit is still paused; resolve conflicts and use %s to continue"
                   (substitute-command-keys "\\[vc-next-action]")))))
 
@@ -1924,10 +1931,7 @@ Always has to fetch, like `vc-hg-incoming-revision' does."
               (error "'hg log' output parse failure"))
             (replace-match (format "drop %s\n" rev)))
           (unless (zerop
-                   (vc-hg-command
-                    nil 1 nil
-                    "--config=extensions.histedit="
-
+                   (vc-hg--run-histedit
                     ;; Without this, --commands is ignored and histedit
                     ;; starts a curses interface.  (Actually redundant
                     ;; with the HGPLAIN=1 set by vc-hg--command-1.)
@@ -1938,11 +1942,7 @@ Always has to fetch, like `vc-hg-incoming-revision' does."
                     ;; are missing, somehow.
                     "--config=histedit.dropmissing=False"
 
-                    ;; Prevent Mercurial trying to open Meld or similar.
-                    ;; FIXME: According to
-                    ;; <https://repo.mercurial-scm.org/hg/help/merge-tools>,
-                    ;; this can be overridden by user's "merge-patterns"
-                    ;; settings.
+                    ;; Keep this as a fallback to the HGMERGE override above.
                     "--config=ui.merge=internal:fail"
 
                     "histedit"
