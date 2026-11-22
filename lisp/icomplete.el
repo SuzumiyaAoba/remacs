@@ -246,6 +246,37 @@ Used to implement the option `icomplete-show-matches-on-no-input'.")
   "C-."   #'icomplete-forward-completions
   "C-,"   #'icomplete-backward-completions)
 
+(defun icomplete--default-prefix-matches (prefix completions)
+  (cl-loop for tail on completions
+           while (consp tail)
+           for completion = (car tail)
+           while (stringp completion)
+           when (string-prefix-p prefix completion)
+           collect completion))
+
+(defun icomplete--ambiguous-default-p ()
+  "Return non-nil if the untouched minibuffer default matches many candidates."
+  (let* ((default (or (car-safe minibuffer-default) minibuffer-default))
+         (completions (or completion-all-sorted-completions
+                          (icomplete--sorted-completions)))
+         (matches (and (stringp default)
+                       (icomplete--default-prefix-matches default completions))))
+    (and (stringp default)
+         (> (length default) 0)
+         (equal (icomplete--field-string) icomplete--initial-input)
+         (> (length matches) 1)
+         (not (cl-some (lambda (completion) (string= default completion))
+                       matches))
+         (not (memq last-command
+                    '(icomplete-forward-completions
+                      icomplete-backward-completions)))
+         (not (completion--selected-candidate))))
+
+(defun icomplete--check-ambiguous-default ()
+  "Signal an error if RET would choose an ambiguous minibuffer default."
+  (when (icomplete--ambiguous-default-p)
+    (user-error "Ambiguous default; type more or select a completion")))
+
 (defun icomplete-ret ()
   "Alternative minibuffer exit for Icomplete.
 If there is a completion candidate and the minibuffer contents is the
@@ -263,7 +294,9 @@ This rebinding is especially useful if you have customized
   (interactive)
   (if (and (car completion-all-sorted-completions)
            (equal (icomplete--field-string) icomplete--initial-input))
-      (icomplete-force-complete-and-exit)
+      (progn
+        (icomplete--check-ambiguous-default)
+        (icomplete-force-complete-and-exit))
     (minibuffer-complete-and-exit)))
 
 (defun icomplete-force-complete-and-exit ()
@@ -455,6 +488,7 @@ require user confirmation."
     (cond ((and probe (file-directory-p probe) (not (string= current "./")))
            (icomplete-force-complete))
           (t
+           (icomplete--check-ambiguous-default)
            (icomplete-force-complete-and-exit)))))
 
 (defun icomplete-fido-exit (force)
@@ -669,6 +703,10 @@ Usually run by inclusion in `minibuffer-setup-hook'."
        with beg = (icomplete--field-beg)
        with end = (icomplete--field-end)
        with all = (completion-all-sorted-completions beg end)
+       with default = (or (car-safe minibuffer-default) minibuffer-default)
+       with default-prefix-matches = (and (stringp default)
+                                           (icomplete--default-prefix-matches
+                                            default all))
        ;; Icomplete mode re-sorts candidates, bubbling the default to
        ;; top if it's found somewhere down the list.  This loop's
        ;; iteration variable, `fn' iterates through these "bubble up
@@ -694,9 +732,7 @@ Usually run by inclusion in `minibuffer-setup-hook'."
                           ;; Has "bar" at the top, so RET will select
                           ;; it, as desired.
                           ,(lambda (comp)
-                             (equal (or (car-safe minibuffer-default)
-                                        minibuffer-default)
-                                    comp))
+                             (equal default comp))
                           ;; Why do we need this second predicate?
                           ;; Because that'll make things like M-x man
                           ;; RET RET, when invoked with point on the
@@ -717,10 +753,11 @@ Usually run by inclusion in `minibuffer-setup-hook'."
                           ;; here. However, it seems generically
                           ;; useful for a very broad spectrum of
                           ;; cases.
+                          ;; Don't choose one arbitrarily when multiple
+                          ;; completions share the default prefix.
                           ,(lambda (comp)
-                             (string-prefix-p (or (car-safe minibuffer-default)
-                                                  minibuffer-default)
-                                              comp))))
+                             (and (= (length default-prefix-matches) 1)
+                                  (string= (car default-prefix-matches) comp)))))
                        ((and fido-mode
                              (not minibuffer-default)
                              (eq (icomplete--category) 'file))
