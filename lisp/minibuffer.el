@@ -3841,11 +3841,28 @@ boundaries for the original string."
          (bounds (completion-boundaries sifned table pred suffix))
          (sifned-start (car bounds))
          ;; Adjust SIFNED-START to be an offset in STRING instead of in SIFNED.
-         (string-start (+ (- sifned-start (length sifned)) (length string))))
-    ;; The text within the boundaries should be identical.
-    (cl-assert
-     (eq t (compare-strings sifned sifned-start nil string string-start nil))
-     t)
+         (string-start
+          (max 0 (min (length string)
+                      (+ (- sifned-start (length sifned)) (length string))))))
+    ;; The direct length adjustment works when SIFN only removes a prefix.
+    ;; Some systems (e.g. Cygwin) also rewrite that prefix, so map the
+    ;; boundary through SIFN when the suffixes don't line up.
+    (unless (eq t (compare-strings sifned sifned-start nil string string-start nil))
+      (let ((qpos (save-match-data
+                    (car (completion--sifn-requote sifned-start doubled-string))))
+            (string-pos 0)
+            (doubled-pos 0))
+        ;; `completion--sifn-requote' returns a position in DOUBLED-STRING;
+        ;; map the doubled dollar signs back to STRING's character positions.
+        (while (< doubled-pos qpos)
+          (setq doubled-pos
+                (+ doubled-pos (if (= (aref string string-pos) ?$) 2 1))
+                string-pos (1+ string-pos)))
+        (setq string-start string-pos)
+        ;; If no exact suffix exists, start completion at the beginning of the
+        ;; original text rather than failing an assertion.
+        (unless (eq t (compare-strings sifned sifned-start nil string string-start nil))
+          (setq string-start 0))))
     ;; No special processing happens on SUFFIX and the end boundary.
     (cons string-start (cdr bounds))))
 
