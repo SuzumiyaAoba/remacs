@@ -921,7 +921,29 @@ Treats actions as defuns."
     (goto-char (point-max)))
   t)
 
-;; Fixme: Should get an extra indent step in editfiles BeginGroup...s.
+(defun cfengine2--editfiles-group-depth ()
+  "Return the nested editfiles BeginGroup depth for the current line."
+  (save-match-data
+    (save-excursion
+      (let ((line (line-beginning-position)))
+        (goto-char (point-min))
+        (or
+         (when (looking-at "[ \t]*editfiles:[ \t]*$")
+           (let ((depth 0))
+             (forward-line 1)
+             (while (< (point) line)
+               (cond
+                ((looking-at "[ \t]*BeginGroup[A-Za-z0-9_]*\\_>")
+                 (setq depth (1+ depth)))
+                ((looking-at "[ \t]*EndGroup\\_>")
+                 (setq depth (max 0 (1- depth)))))
+               (forward-line 1))
+             ;; A closing delimiter is aligned with its matching opener.
+             (goto-char line)
+             (when (looking-at "[ \t]*EndGroup\\_>")
+               (setq depth (max 0 (1- depth))))
+             depth))
+         0)))))
 
 (defun cfengine2-indent-line ()
   "Indent a line in Cfengine mode.
@@ -972,7 +994,11 @@ Intended as the value of `indent-line-function'."
 	(indent-line-to cfengine-indent))
        ;; Else don't indent.
        (t
-	(indent-line-to 0))))
+	(indent-line-to 0)))
+      (let ((group-depth (cfengine2--editfiles-group-depth)))
+        (when (> group-depth 0)
+          (indent-line-to (+ (current-indentation)
+                             (* group-depth cfengine-indent)))))
     ;; If initial point was within line's indentation,
     ;; position after the indentation.  Else stay at same point in text.
     (if (> (- (point-max) pos) (point))
