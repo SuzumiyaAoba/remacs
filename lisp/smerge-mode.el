@@ -1303,7 +1303,9 @@ need to be markers to indicate the corresponding buffers)."
 (defun smerge--refine-shadow-cursor (window _oldpos dir)
   (let ((ol (window-parameter window 'smerge--refine-shadow-cursor)))
     (if (not (and smerge-refine-shadow-cursor
-                  (memq dir '(entered moved))))
+                  (memq dir '(entered moved))
+                  (or cursor-in-non-selected-windows
+                      (eq window (selected-window)))))
         (if ol (delete-overlay ol))
       (with-current-buffer (window-buffer window)
         (let* ((cursor (window-point window))
@@ -1325,7 +1327,6 @@ need to be markers to indicate the corresponding buffers)."
                                          (_ (numberp x)))
                                (< (1+ (% x tab-width)) tab-width))))
                 (setq other-end other-beg))
-              ;; FIXME: Doesn't obey `cursor-in-non-selected-windows'.
               (if ol (move-overlay ol other-beg other-end)
                 (setq ol (make-overlay other-beg other-end nil t nil))
                 (setf (window-parameter window 'smerge--refine-shadow-cursor)
