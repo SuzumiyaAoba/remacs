@@ -578,17 +578,11 @@ one-argument QFUNs remain supported."
              (qsuffix (cdr action))
              (ufull (if (zerop (length qsuffix)) ustring
                       (funcall unquote (concat string qsuffix))))
-             ;; If (not (string-prefix-p ustring ufull)) we have a problem:
-             ;; unquoting the qfull gives something "unrelated" to ustring.
-             ;; E.g. "~/" and "/" where "~//" gets unquoted to just "/" (see
-             ;; bug#47678).
-             ;; In that case we can't even tell if we're right before the
-             ;; "/" or right after it (aka if this "/" is from qstring or
-             ;; from qsuffix), thus which usuffix to use is very unclear.
-             (usuffix (if (string-prefix-p ustring ufull)
-                          (substring ufull (length ustring))
-                        ;; FIXME: Maybe "" is preferable/safer?
-                        qsuffix))
+             ;; UNQUOTE can normalize text before QSUFFIX, so USTRING need
+             ;; not be a prefix of UFULL.  Use the shared prefix to find the
+             ;; part added by QSUFFIX in the unquoted representation.
+             (common-prefix (fill-common-string-prefix ustring ufull))
+             (usuffix (substring ufull (length common-prefix)))
              (boundaries (completion-boundaries ustring table pred usuffix))
              (qlboundary (car (funcall requote (car boundaries) string)))
              (qrboundary (if (zerop (cdr boundaries)) 0 ;Common case.
@@ -730,21 +724,21 @@ one-argument QFUNs remain supported."
                                    _unquote requote)
   (when completions
     (pcase-let*
-        ((prefix
+        ((prefix0
           (let ((completion-regexp-list nil))
             (try-completion "" (cons (substring ustring boundary)
                                      completions))))
-         (`(,qfullpos . ,qfun)
-          (funcall requote (+ boundary (length prefix)) string))
-         (qfullprefix (substring string 0 qfullpos))
-	 ;; FIXME: This assertion can be wrong, e.g. in Cygwin, where
-	 ;; (unquote "c:\bin") => "/usr/bin" but (unquote "c:\") => "/".
-         ;;(cl-assert (string-equal-ignore-case
-         ;;            (funcall unquote qfullprefix)
-         ;;            (concat (substring ustring 0 boundary) prefix))
-         ;;           t))
-         (qboundary (car (funcall requote boundary string)))
-         (_ (cl-assert (<= qboundary qfullpos)))
+	 (`(,qboundary . ,qboundary-fun) (funcall requote boundary string))
+	 (`(,qfullpos0 . ,qfull-fun)
+	  (funcall requote (+ boundary (length prefix0)) string))
+	 (nonmonotonic (> qboundary qfullpos0))
+	 ;; If UNQUOTE rewrites text before the completion boundary, there is no
+	 ;; stable common-prefix segment to insert between the user's quoted
+	 ;; prefix and the candidate.  Requote the entire suffix from the boundary.
+	 (prefix (if nonmonotonic "" prefix0))
+	 (qfullpos (if nonmonotonic qboundary qfullpos0))
+	 (qfun (if nonmonotonic qboundary-fun qfull-fun))
+	 (qfullprefix (substring string 0 qfullpos))
          ;; FIXME: this split/quote/concat business messes up the carefully
          ;; placed completions-common-part and completions-first-difference
          ;; faces.  We could try within the mapcar loop to search for the
