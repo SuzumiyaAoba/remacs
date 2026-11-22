@@ -3104,7 +3104,11 @@ use frame_title::{FrameTitleDependencies, frame_title};
 struct ModeLineCharacterProperties {
     help: Option<String>,
     inhibit_substitution: bool,
+    /// Uses the stock `mode-line-buffer-identification-keymap`.
     identification: bool,
+    /// Renders inside the `mode-line-buffer-identification` variable.
+    buffer_identification: bool,
+    local_map: bool,
     pointer: Option<GridPointerShape>,
     mouse_face: Option<Value>,
 }
@@ -3673,13 +3677,12 @@ fn format_mode_line_string(
                 Some((help, inhibit_substitution)) => (Some(help), inhibit_substitution),
                 None => (None, false),
             };
-            let identification = i.q_soft("local-map").is_some_and(|property| {
-                mode_line_identification_map(
-                    i,
-                    buffer_id,
-                    &crate::lisp::eval::plist_get(&plist, property),
-                )
-            });
+            let local_map = i
+                .q_soft("local-map")
+                .map(|property| crate::lisp::eval::plist_get(&plist, property));
+            let identification = local_map
+                .as_ref()
+                .is_some_and(|map| mode_line_identification_map(i, buffer_id, map));
             let pointer = i.q_soft("pointer").and_then(|property| {
                 mode_line_pointer_shape(i, &crate::lisp::eval::plist_get(&plist, property))
             });
@@ -3691,6 +3694,8 @@ fn format_mode_line_string(
                 help,
                 inhibit_substitution,
                 identification,
+                buffer_identification: false,
+                local_map: local_map.is_some_and(|map| map.truthy()),
                 pointer,
                 mouse_face,
             }
@@ -3821,7 +3826,25 @@ pub(super) fn format_mode_line_value(
             if matches!(value, Value::Sym(id) if id == *symbol) {
                 return String::new();
             }
-            format_mode_line_value(i, buffer_id, &value, context, depth + 1, fill_remaining)
+            let start = (i.symbol_name(*symbol) == "mode-line-buffer-identification")
+                .then(|| {
+                    context
+                        .properties
+                        .borrow()
+                        .as_ref()
+                        .map(|properties| properties.characters.len())
+                })
+                .flatten();
+            let output =
+                format_mode_line_value(i, buffer_id, &value, context, depth + 1, fill_remaining);
+            if let Some(start) = start
+                && let Some(properties) = context.properties.borrow_mut().as_mut()
+            {
+                for character in properties.characters.iter_mut().skip(start) {
+                    character.buffer_identification = true;
+                }
+            }
+            output
         }
         Value::Cons(_) => {
             let Ok(elements) = value.list_to_vec() else {
@@ -3865,8 +3888,11 @@ pub(super) fn format_mode_line_value(
                             };
                             let help = property("help-echo")
                                 .and_then(|value| help_echo_text(i, value.clone()));
-                            let identification = property("local-map")
+                            let local_map = property("local-map");
+                            let identification = local_map
                                 .map(|value| mode_line_identification_map(i, buffer_id, value));
+                            let disable_buffer_identification =
+                                local_map.is_some_and(Value::is_nil);
                             let pointer =
                                 property("pointer").map(|value| mode_line_pointer_shape(i, value));
                             let mouse_face = property("mouse-face")
@@ -3882,6 +3908,12 @@ pub(super) fn format_mode_line_value(
                                 }
                                 if let Some(identification) = identification {
                                     character.identification = identification;
+                                }
+                                if let Some(local_map) = local_map {
+                                    character.local_map = local_map.truthy();
+                                }
+                                if disable_buffer_identification {
+                                    character.buffer_identification = false;
                                 }
                                 if let Some(pointer) = pointer {
                                     character.pointer = pointer;
@@ -6174,7 +6206,10 @@ fn place_formatted_window_row(
                 shape: properties.pointer.unwrap_or(GridPointerShape::Arrow),
             },
         );
-        if cells > 0 && properties.identification {
+        if cells > 0
+            && (properties.identification
+                || (properties.buffer_identification && properties.local_map))
+        {
             let start = left.saturating_add(column);
             let end = start.saturating_add(cells);
             match &mut buffer_name_range {

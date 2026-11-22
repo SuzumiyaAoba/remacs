@@ -517,9 +517,23 @@ pub(super) fn mode_line_mouse_position(
             && column >= mode_line.left
             && column < mode_line.left.saturating_add(mode_line.width)
     })?;
+    let mode_line_buffer_name = mode_line
+        .buffer_name_range
+        .is_some_and(|(left, right)| column >= left && column < right);
+    let buffer_position = if let Some((left, _)) = mode_line
+        .buffer_name_range
+        .filter(|(left, right)| column >= *left && column < *right)
+    {
+        let text = grid.rows.get(row)?;
+        let left = grid_byte_index_at_column(text, left);
+        let column = grid_byte_index_at_column(text, column);
+        text.get(left..column.max(left))?.chars().count()
+    } else {
+        0
+    };
     Some(MousePosition {
         buffer_id: mode_line.buffer_id,
-        buffer_position: 0,
+        buffer_position,
         utf16_offset: 0,
         x: super::device_pixels(point.x, scale_factor),
         y: super::device_pixels(point.y, scale_factor),
@@ -528,9 +542,7 @@ pub(super) fn mode_line_mouse_position(
         window_id: Some(mode_line.window_id),
         area: Some(MouseArea::ModeLine),
         object: None,
-        mode_line_buffer_name: mode_line
-            .buffer_name_range
-            .is_some_and(|(left, right)| column >= left && column < right),
+        mode_line_buffer_name,
         timestamp: mouse_timestamp_ms(),
     })
 }
@@ -554,6 +566,10 @@ pub(super) fn mode_line_mouse_position_with_window(
         let right = grid_byte_index_at_column(text, right);
         position.mode_line_buffer_name =
             point.x >= line.x_for_index(left) && point.x < line.x_for_index(right);
+        if position.mode_line_buffer_name {
+            let column = line.closest_index_for_x(point.x).clamp(left, right);
+            position.buffer_position = text.get(left..column)?.chars().count();
+        }
     }
     Some(position)
 }

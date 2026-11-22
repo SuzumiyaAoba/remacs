@@ -3101,11 +3101,18 @@ fn mouse_position_value(i: &mut Interp, position: MousePosition) -> Option<Value
                     .or_else(|| i.default_toplevel_value(id))
             })
             .and_then(|value| match value {
-                Value::Cons(cell) => Some(Value::cons(
-                    cell.borrow().car.clone(),
-                    Value::Int(position.column as i128),
-                )),
+                Value::Cons(cell) => Some(cell.borrow().car.clone()),
+                Value::Str(_) => Some(value),
                 _ => None,
+            })
+            .and_then(|string| {
+                let position = match &string {
+                    Value::Str(text) => position
+                        .buffer_position
+                        .min(text.borrow().len().saturating_sub(1)),
+                    _ => position.buffer_position,
+                };
+                Some(Value::cons(string, Value::Int(position as i128)))
             })
             .unwrap_or(Value::Nil);
         let mut fields = vec![

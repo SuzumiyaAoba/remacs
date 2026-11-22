@@ -731,7 +731,8 @@ pub enum MouseObject {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MousePosition {
     pub buffer_id: usize,
-    /// Zero-based character position in BUFFER.
+    /// Zero-based position in BUFFER, or in the mode-line identification
+    /// string when `mode_line_buffer_name` is true.
     pub buffer_position: usize,
     /// UTF-16 offset used by the native text input APIs.
     pub utf16_offset: usize,
