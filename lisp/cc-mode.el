@@ -2292,9 +2292,8 @@ with // and /*, not more generic line and block comments."
 	     (when (>= end1 beg) ; Don't hassle about changes entirely in
 					; comments.
 	       ;; Find a limit for the search for a `c-type' property
-	       ;; Point is currently undefined.  A `goto-char' somewhere is needed.  (2020-12-06).
-	       (setq lim-2 (c-determine-limit 1000 (point) ; that is wrong.  FIXME!!!  (2020-12-06)
-					      ))
+	       ;; relative to the beginning of the change.
+	       (setq lim-2 (c-determine-limit 1000 beg))
 	       (while
 		   (and (/= (skip-chars-backward "^;{}" lim-2) 0)
 			(> (point) (point-min))
