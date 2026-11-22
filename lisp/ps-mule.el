@@ -1049,6 +1049,10 @@ Any other value is treated as \"/H0\"."
 					       ("/L0" 6)
 					       (_     0))))))))
 
+(defun ps-mule-encode-header-string-identity (string _fonttag)
+  "Return ASCII header STRING as a single encoded PostScript fragment."
+  (list string))
+
 ;;;###autoload
 (defun ps-mule-begin-job (from to)
   "Start printing job for multi-byte chars between FROM and TO.
@@ -1059,8 +1063,8 @@ It checks if all multi-byte characters in the region are printable or not."
 	     (= (skip-chars-forward "\x00-\x7F" to) to)))
       ;; All characters can be printed by normal PostScript fonts.
       (setq ps-basic-plot-string-function #'ps-basic-plot-string
-            ;; FIXME: Doesn't ps-encode-header-string-function take 2 args?
-	    ps-encode-header-string-function #'identity)
+	    ps-encode-header-string-function
+	    #'ps-mule-encode-header-string-identity)
     (setq ps-basic-plot-string-function #'ps-mule-plot-string
 	  ps-encode-header-string-function #'ps-mule-encode-header-string
 	  ps-mule-font-info-database
