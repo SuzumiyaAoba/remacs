@@ -695,6 +695,7 @@ pub fn run_gui_with_dump(
 
         cx.spawn(async move |cx| {
             let mut windows = HashMap::<usize, WindowHandle<EditorView>>::new();
+            let mut frame_parents = HashMap::<usize, Option<usize>>::new();
             let mut window_modes = HashMap::<usize, Option<String>>::new();
             let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
             let mut frame_focus_on_map = HashMap::<usize, bool>::new();
@@ -721,6 +722,8 @@ pub fn run_gui_with_dump(
                         pending_frame_visibilities
                             .retain(|frame_id, _| live_frames.contains(frame_id));
                         pending_frame_orders.retain(|frame_id, _| live_frames.contains(frame_id));
+                        let snapshots = frame_snapshots_parent_first(snapshots);
+                        let mut native_window_changed = HashSet::new();
                         for mut snapshot in snapshots {
                             let frame_id = snapshot.frame_id;
                             snapshot.visibility = frame_snapshot_visibility(
@@ -781,6 +784,21 @@ pub fn run_gui_with_dump(
                                 snapshot.z_group.clone(),
                                 snapshot.parent_frame.is_some(),
                             );
+                            let parent_window_changed = snapshot
+                                .parent_frame
+                                .is_some_and(|parent| native_window_changed.contains(&parent));
+                            let parent_changed =
+                                frame_parents.get(&frame_id) != Some(&snapshot.parent_frame);
+                            if windows.contains_key(&frame_id)
+                                && (parent_changed || parent_window_changed)
+                            {
+                                native_window_changed.insert(frame_id);
+                                if let Some(handle) = windows.remove(&frame_id) {
+                                    let _ = handle.update(cx, |_view, window, _cx| {
+                                        window.remove_window();
+                                    });
+                                }
+                            }
                             if let Some(handle) = windows.get(&frame_id).copied() {
                                 let update_window_mode =
                                     window_modes.get(&frame_id) != Some(&fullscreen);
@@ -899,6 +917,7 @@ pub fn run_gui_with_dump(
                                 window_titlebars.insert(frame_id, titlebar_appearance);
                                 window_appearances.insert(frame_id, ns_appearance);
                                 window_represented_files.insert(frame_id, represented_file);
+                                frame_parents.insert(frame_id, snapshot.parent_frame);
                                 if update_visibility {
                                     native_visibility.insert(frame_id, visibility);
                                 }
@@ -1000,6 +1019,8 @@ pub fn run_gui_with_dump(
                                     .insert(frame_id, initial_represented_file);
                                 native_visibility.insert(frame_id, visibility);
                                 windows.insert(frame_id, handle);
+                                frame_parents.insert(frame_id, snapshot.parent_frame);
+                                native_window_changed.insert(frame_id);
                                 continue;
                             }
 
@@ -1090,6 +1111,8 @@ pub fn run_gui_with_dump(
                             pending_frame_visibilities.remove(&frame_id);
                             native_visibility.insert(frame_id, visibility);
                             windows.insert(frame_id, handle);
+                            frame_parents.insert(frame_id, snapshot.parent_frame);
+                            native_window_changed.insert(frame_id);
                         }
                         let removed: Vec<_> = windows
                             .keys()
@@ -1105,6 +1128,7 @@ pub fn run_gui_with_dump(
                                 });
                             }
                             window_modes.remove(&frame_id);
+                            frame_parents.remove(&frame_id);
                             frame_behaviors.remove(&frame_id);
                             frame_focus_on_map.remove(&frame_id);
                             frame_skip_taskbar.remove(&frame_id);
@@ -1840,6 +1864,32 @@ fn frame_size_dimension(
             .unwrap_or(default),
         None => default,
     }
+}
+
+fn frame_snapshots_parent_first(mut snapshots: Vec<FrameSnapshot>) -> Vec<FrameSnapshot> {
+    let mut ordered = Vec::with_capacity(snapshots.len());
+    while !snapshots.is_empty() {
+        let pending: HashSet<_> = snapshots.iter().map(|snapshot| snapshot.frame_id).collect();
+        let mut next = Vec::new();
+        let mut made_progress = false;
+        for snapshot in snapshots {
+            if snapshot
+                .parent_frame
+                .is_some_and(|parent| pending.contains(&parent))
+            {
+                next.push(snapshot);
+            } else {
+                ordered.push(snapshot);
+                made_progress = true;
+            }
+        }
+        if !made_progress {
+            ordered.extend(next);
+            break;
+        }
+        snapshots = next;
+    }
+    ordered
 }
 
 fn frame_window_options(
