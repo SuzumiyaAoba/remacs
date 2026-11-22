@@ -150,7 +150,7 @@ impl Interp {
                                         if parsed.has_rest {
                                             1
                                         } else {
-                                            parsed.max as i128
+                                            parsed.reported_max
                                         },
                                     ))
                                 }

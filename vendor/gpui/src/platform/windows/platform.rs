@@ -418,6 +418,29 @@ impl Platform for WindowsPlatform {
             .map(|inner| inner.handle)
     }
 
+    fn window_stack(&self) -> Option<Vec<AnyWindowHandle>> {
+        // Walk the desktop's top-level Z order and retain only windows
+        // owned by this GPUI platform instance. `GW_HWNDNEXT` proceeds
+        // from the topmost window toward the bottommost one.
+        let app_windows: Vec<HWND> = self
+            .raw_window_handles
+            .read()
+            .iter()
+            .map(|window| window.as_raw())
+            .collect();
+        let mut hwnd = unsafe { GetTopWindow(None) }.unwrap_or_default();
+        let mut stack = Vec::new();
+        while !hwnd.is_invalid() {
+            if app_windows.contains(&hwnd)
+                && let Some(window) = self.window_from_hwnd(hwnd)
+            {
+                stack.push(window.handle);
+            }
+            hwnd = unsafe { GetWindow(hwnd, GW_HWNDNEXT) }.unwrap_or_default();
+        }
+        Some(stack)
+    }
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,

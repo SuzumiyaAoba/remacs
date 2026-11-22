@@ -132,12 +132,14 @@ When this is `function', only ask when called non-interactively."
 	(< (point) (- (point-max) copyright-limit))
       (> (point) (+ (point-min) copyright-limit)))))
 
-(defun copyright-find-copyright ()
+(defun copyright-find-copyright (&optional continue)
   "Return non-nil if a copyright header suitable for updating is found.
 The header must match `copyright-regexp' and `copyright-names-regexp', if set.
-This function sets the match data that `copyright-update-year' uses."
+This function sets the match data that `copyright-update-year' uses.
+When CONTINUE is non-nil, search from point in the configured direction."
   (widen)
-  (goto-char (copyright-start-point))
+  (unless continue
+    (goto-char (copyright-start-point)))
   ;; In case the regexp is rejected.  This is useful because
   ;; copyright-update is typically called from before-save-hook where
   ;; such an error is very inconvenient for the user.
@@ -147,15 +149,24 @@ This function sets the match data that `copyright-update-year' uses."
     (let ((regexp (concat "\\(" copyright-regexp
 			  "\\)\\([ \t]*\n\\)?.*\\(?:"
 			  copyright-names-regexp "\\)")))
-      (when (copyright-re-search regexp (copyright-limit) t)
-        ;; We may accidentally have landed in the middle of a
-        ;; copyright line, so re-perform the search without the
-        ;; limit.  (Otherwise we may be inserting the new year in the
-        ;; middle of the list of years.)
-        (if copyright-at-end-flag
-            (goto-char (match-end 0))
-          (goto-char (match-beginning 0)))
-        (copyright-re-search regexp nil t)))))
+      (if continue
+          (copyright-re-search regexp nil t)
+        (when (copyright-re-search regexp (copyright-limit) t)
+          ;; We may accidentally have landed in the middle of a
+          ;; copyright line, so re-perform the search without the
+          ;; limit.  (Otherwise we may be inserting the new year in the
+          ;; middle of the list of years.)
+          (if copyright-at-end-flag
+              (goto-char (match-end 0))
+            (goto-char (match-beginning 0)))
+          (copyright-re-search regexp nil t))))))
+
+(defun copyright--next-search-marker ()
+  "Return a marker just beyond the current copyright match."
+  (copy-marker (if copyright-at-end-flag
+                   (match-beginning 0)
+                 (match-end 0))
+               (not copyright-at-end-flag)))
 
 (defun copyright-find-end ()
   "Possibly adjust the search performed by `copyright-find-copyright'.
@@ -238,9 +249,16 @@ interactively."
 	(save-restriction
 	  ;; If names-regexp doesn't match, we should not mess with
 	  ;; the years _or_ the GPL version.
-	  ;; TODO there may be multiple copyrights we should update.
-	  (when (copyright-find-copyright)
-	    (copyright-update-year arg noquery)
+	  (let ((continue nil)
+                (found nil))
+            (while (copyright-find-copyright continue)
+              (setq continue t
+                    found t)
+              (let ((next (copyright--next-search-marker)))
+                (copyright-update-year arg noquery)
+                (goto-char next)
+                (set-marker next nil)))
+	    (when found
 	    (goto-char (copyright-start-point))
 	    (and copyright-current-gpl-version
 		 ;; Match the GPL version comment in .el files.
@@ -262,13 +280,75 @@ interactively."
 			  (format "Replace GPL version %s with version %s? "
 				  (match-string-no-properties 1)
 				  copyright-current-gpl-version)))))
-		 (replace-match copyright-current-gpl-version t t nil 1))))
+		 (replace-match copyright-current-gpl-version t t nil 1)))))
         (setq-local copyright-update nil)))
     ;; If a write-file-hook returns non-nil, the file is presumed to be written.
     nil))
 
 
 ;; FIXME heuristic should be within 50 years of present (cf calendar).
+(defun copyright--fix-current-years ()
+  "Fix years in the copyright notice at the current match data."
+  (let ((s (match-beginning 3))
+        (p (make-marker))
+        ;; Not line-beg-pos, so we don't mess up leading whitespace.
+        (copystart (match-beginning 0))
+        e last sep year prev-year first-year range-start range-end)
+    ;; In case years are continued over multiple, commented lines.
+    (goto-char (match-end 1))
+    (copyright-find-end)
+    (setq e (copy-marker (1+ (match-end 3))))
+    (goto-char s)
+    (while (re-search-forward "[0-9]+" e t)
+      (set-marker p (point))
+      (goto-char (match-beginning 0))
+      (setq year (string-to-number (match-string 0)))
+      (and (setq sep (char-before))
+           (/= (char-syntax sep) ?\s)
+           (not (memq sep '(?- ?–)))
+           (insert " "))
+      (when (< year 100)
+        (insert (if (>= year 50) "19" "20"))
+        (setq year (+ year (if (>= year 50) 1900 2000))))
+      (goto-char p)
+      (when copyright-year-ranges
+        ;; If the previous thing was a range, don't try to tack more on.
+        ;; Ie not 2000-2005 -> 2000-2005-2007
+        ;; TODO should merge into existing range if possible.
+        (if (memq sep '(?- ?–))
+            (setq prev-year nil
+                  year nil)
+          (if (and prev-year (= year (1+ prev-year)))
+              (setq range-end (point))
+            (when (and first-year prev-year
+                       (> prev-year first-year))
+              (goto-char range-end)
+              (delete-region range-start range-end)
+              (insert (format "-%d" prev-year))
+              (goto-char p))
+            (setq first-year year
+                  range-start (point)))))
+      (setq prev-year year
+            last p))
+    (when last
+      (when (and copyright-year-ranges
+                 first-year prev-year
+                 (> prev-year first-year))
+        (goto-char range-end)
+        (delete-region range-start range-end)
+        (insert (format "-%d" prev-year)))
+      (goto-char last)
+      ;; Don't mess up whitespace after the years.
+      (skip-chars-backward " \t")
+      (save-restriction
+        (narrow-to-region copystart (point))
+        ;; This is clearly wrong, eg what about comment markers?
+        ;;; (let ((fill-prefix "     "))
+        ;; TODO do not break copyright owner over lines.
+        (fill-region (point-min) (point-max))))
+    (set-marker e nil)
+    (set-marker p nil)))
+
 ;;;###autoload
 (defun copyright-fix-years ()
   "Convert 2 digit years to 4 digit years.
@@ -276,71 +356,23 @@ Uses heuristic: year >= 50 means 19xx, < 50 means 20xx.
 If `copyright-year-ranges' (which see) is non-nil, also
 independently replaces consecutive years with a range."
   (interactive)
-  ;; TODO there may be multiple copyrights we should fix.
-  (if (copyright-find-copyright)
-      (let ((s (match-beginning 3))
-	    (p (make-marker))
-	    ;; Not line-beg-pos, so we don't mess up leading whitespace.
-	    (copystart (match-beginning 0))
-	    e last sep year prev-year first-year range-start range-end)
-	;; In case years are continued over multiple, commented lines.
-	(goto-char (match-end 1))
-	(copyright-find-end)
-	(setq e (copy-marker (1+ (match-end 3))))
-	(goto-char s)
-	(while (re-search-forward "[0-9]+" e t)
-	  (set-marker p (point))
-	  (goto-char (match-beginning 0))
-	  (setq year (string-to-number (match-string 0)))
-	  (and (setq sep (char-before))
-	       (/= (char-syntax sep) ?\s)
-	       (not (memq sep '(?- ?–)))
-	       (insert " "))
-	  (when (< year 100)
-	    (insert (if (>= year 50) "19" "20"))
-	    (setq year (+ year (if (>= year 50) 1900 2000))))
-	  (goto-char p)
-	  (when copyright-year-ranges
-	    ;; If the previous thing was a range, don't try to tack more on.
-	    ;; Ie not 2000-2005 -> 2000-2005-2007
-	    ;; TODO should merge into existing range if possible.
-	    (if (memq sep '(?- ?–))
-		(setq prev-year nil
-		      year nil)
-	      (if (and prev-year (= year (1+ prev-year)))
-		  (setq range-end (point))
-		(when (and first-year prev-year
-			   (> prev-year first-year))
-		  (goto-char range-end)
-		  (delete-region range-start range-end)
-		  (insert (format "-%d" prev-year))
-		  (goto-char p))
-		(setq first-year year
-		      range-start (point)))))
-	  (setq prev-year year
-		last p))
-	(when last
-	  (when (and copyright-year-ranges
-		     first-year prev-year
-		     (> prev-year first-year))
-	    (goto-char range-end)
-	    (delete-region range-start range-end)
-	    (insert (format "-%d" prev-year)))
-	  (goto-char last)
-	  ;; Don't mess up whitespace after the years.
-	  (skip-chars-backward " \t")
-	   (save-restriction
-	     (narrow-to-region copystart (point))
-	     ;; This is clearly wrong, eg what about comment markers?
- ;;;	    (let ((fill-prefix "     "))
-	     ;; TODO do not break copyright owner over lines.
-	     (fill-region (point-min) (point-max))))
-	(set-marker e nil)
-	(set-marker p nil))
-    ;; Simply reformatting the years is not copyrightable, so it does
-    ;; not seem right to call this.  Also it messes with ranges.
-;;;	(copyright-update nil t))
-    (message "No copyright message")))
+  (let ((continue nil)
+        (found nil)
+        (last-point (copy-marker (point))))
+    (while (copyright-find-copyright continue)
+      (setq continue t
+            found t)
+      (let ((next (copyright--next-search-marker)))
+        (copyright--fix-current-years)
+        (set-marker last-point (point))
+        (goto-char next)
+        (set-marker next nil)))
+    (if found
+        (goto-char last-point)
+      ;; Simply reformatting the years is not copyrightable, so it does
+      ;; not seem right to call this.  Also it messes with ranges.
+      (message "No copyright message"))
+    (set-marker last-point nil)))
 
 ;;;###autoload
 (define-skeleton copyright

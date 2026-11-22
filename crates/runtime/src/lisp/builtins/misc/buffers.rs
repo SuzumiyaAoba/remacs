@@ -103,7 +103,7 @@ pub(super) fn f_buffer_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> 
     let Some(b) = buf else {
         return Ok(Value::cons(Value::Int(0), Value::Int(0)));
     };
-    let (text, tab_width, ctl_arrow) = {
+    let (text, tab_width, ctl_arrow, glyphless) = {
         let bb = b.borrow();
         let local = |name: &str| {
             let id = i.q_soft(name)?;
@@ -118,20 +118,18 @@ pub(super) fn f_buffer_text_pixel_size(i: &mut Interp, a: crate::lisp::Argv) -> 
             _ => 8,
         };
         let ctl_arrow = local("ctl-arrow").map_or(true, |v| v.truthy());
+        let glyphless = local("glyphless-char-display").filter(|t| is_char_table(i, t));
         (
             bb.text.substring(bb.begv, bb.text_len()),
             tab_width,
             ctl_arrow,
+            glyphless,
         )
     };
     // Zero-width chars with a `glyphless-char-display' method draw as
     // that method on the tty: `thin-space' (the default for format
     // controls and variation selectors) takes one column.  A cons
     // entry is (GRAPHICAL . TEXT).
-    let glyphless = i
-        .q_soft("glyphless-char-display")
-        .map(|id| i.obarray.symbol(id).value.clone())
-        .filter(|t| is_char_table(i, t));
     let thin_space = i.q_soft("thin-space");
     let glyph_width = |c: crate::lisp::text::EmacsChar| -> usize {
         let u = c.code();

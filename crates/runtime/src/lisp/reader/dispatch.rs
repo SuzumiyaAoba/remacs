@@ -153,6 +153,14 @@ impl Reader<'_> {
                 // In-memory readers treat the 0x1f record separator as the
                 // end of this input object.  Bytes after it belong to the
                 // surrounding load protocol and are not a new Lisp form.
+                // GNU's function-stream reader continues this same read
+                // after the separator instead of reporting EOF.
+                if matches!(&self.source, super::ReadSource::Function { .. }) {
+                    return match self.read_inner()? {
+                        Some(value) => Ok(value),
+                        None => Err(eof_err(self.interp)),
+                    };
+                }
                 Err(eof_err(self.interp))
             }
             Some('(') => {

@@ -512,8 +512,8 @@ fn bq_check_list(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     }
 }
 
-/// GNU CHECK_LIST_CAR: every element of `list` must itself be a
-/// proper list.
+/// GNU CHECK_LIST_CAR: every element of `list` must be a cons pair.
+/// Its cdr is the backquote FORM and may be dotted.
 fn bq_check_list_car(i: &mut Interp, list: &Value) -> Result<(), Flow> {
     let mut cur = list.clone();
     let mut seen = FxHashSet::default();
@@ -530,7 +530,9 @@ fn bq_check_list_car(i: &mut Interp, list: &Value) -> Result<(), Flow> {
                         .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote list"))?;
                     (b.car.clone(), b.cdr.clone())
                 };
-                bq_check_list(i, &car_v)?;
+                if !matches!(car_v, Value::Cons(_)) {
+                    return Err(i.wrong_type_mut("listp", &car_v));
+                }
                 cur = cdr_v;
             }
             other => return Err(i.wrong_type_mut("listp", other)),
@@ -541,7 +543,14 @@ fn bq_check_list_car(i: &mut Interp, list: &Value) -> Result<(), Flow> {
 /// GNU CHECK_NUMBER_OR_MARKER.
 fn bq_check_num_or_mark(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     match v {
-        Value::Int(_) | Value::Marker(_) => Ok(()),
+        Value::Int(_) | Value::BigInt(_) | Value::Float(_) => Ok(()),
+        Value::Marker(marker) => {
+            if marker.borrow().buffer.is_none() {
+                Err(i.error("Marker does not point anywhere"))
+            } else {
+                Ok(())
+            }
+        }
         other => Err(i.wrong_type_mut("number-or-marker-p", other)),
     }
 }

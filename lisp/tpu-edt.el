@@ -1153,7 +1153,8 @@ and the total number of lines in the buffer."
 	;;    default -  describe the key
 	;;
 	(setq fkey (format "%s" key))
-	(cond ((equal tpu-help-enter fkey)
+	(cond ((or (equal tpu-help-enter fkey)
+                   (equal key [kp-enter]))
 	       (setq split nil)
 	       (delete-other-windows))
 	      ((or (equal tpu-help-N fkey) (equal tpu-help-n fkey))

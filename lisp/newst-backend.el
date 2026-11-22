@@ -831,7 +831,7 @@ Argument BUFFER is the buffer of the retrieval process."
                           (newsticker--remove-xml-comments-preserving-markup)
                           (list (libxml-parse-xml-region (point-min) (point-max)
                                                          nil)))
-                      (xml-parse-region (point-min) (point-max)))
+                      (newsticker--xml-parse-region-preserving-empty-attributes))
                   (error (message "Could not parse %s: %s"
                                   (buffer-name) (cadr errordata))
                          (throw 'oops nil)))))
@@ -1080,6 +1080,115 @@ This is a lexical pass for opaque XML regions, not an XML parser."
          (t (newsticker--xml-skip-tag)))))
     (cons prefix (nreverse replacements))))
 
+(defun newsticker--xml-skip-doctype ()
+  "Skip a DOCTYPE declaration, including an internal subset."
+  (forward-char (length "!DOCTYPE"))
+  (let ((bracket-depth 0)
+        quote
+        finished)
+    (while (and (not finished) (not (eobp)))
+      (let ((char (char-after))
+            skipped-comment)
+        (cond
+         ((and (not quote) (looking-at "<!--"))
+          (unless (search-forward "-->" nil t)
+            (error "Can't find end of XML comment in DOCTYPE"))
+          (setq skipped-comment t))
+         (quote
+          (when (= char quote)
+            (setq quote nil)))
+         ((memq char '(34 39))
+          (setq quote char))
+         ((= char 91)
+          (setq bracket-depth (1+ bracket-depth)))
+         ((= char 93)
+          (setq bracket-depth (max 0 (1- bracket-depth))))
+         ((and (= char 62) (zerop bracket-depth))
+          (setq finished t)))
+        (unless (or finished skipped-comment)
+          (forward-char))))
+    (unless (eobp)
+      (forward-char))))
+
+(defun newsticker--xml-protect-empty-attribute-values (prefix)
+  "Replace empty attribute values with tokens derived from PREFIX.
+Return (TOKEN . EMPTY-STRING) pairs for restoring parsed values."
+  (let ((counter 0)
+        replacements)
+    (goto-char (point-min))
+    (while (search-forward "<" nil t)
+      (cond
+       ((looking-at "!--")
+        (unless (search-forward "-->" nil t)
+          (error "Can't find end of XML comment")))
+       ((looking-at "!DOCTYPE")
+        (newsticker--xml-skip-doctype))
+       ((looking-at "!")
+        (newsticker--xml-skip-tag))
+       ((looking-at "?")
+        (unless (search-forward "?>" nil t)
+          (error "Can't find end of XML processing instruction")))
+       (t
+        (let (quote value-start finished)
+          (while (and (not finished) (not (eobp)))
+            (let ((char (char-after)))
+              (cond
+               (quote
+                (when (= char quote)
+                  (when (= (point) value-start)
+                    (let ((token (format "%s-EMPTY-%d-X"
+                                         prefix counter)))
+                      (setq counter (1+ counter))
+                      (insert token)
+                      (push (cons token "") replacements)))
+                  (setq quote nil)))
+               ((memq char '(34 39))
+                (setq quote char
+                      value-start (1+ (point))))
+               ((= char 62)
+                (setq finished t)))
+              (unless finished
+                (forward-char)))))))
+    (nreverse replacements)))
+
+(defun newsticker--xml-restore-empty-attribute-values (object replacements)
+  "Restore empty attribute tokens in parsed XML OBJECT."
+  (cond
+   ((stringp object)
+    (let ((replacement (assoc object replacements)))
+      (if replacement (cdr replacement) object)))
+   ((consp object)
+    (cons (newsticker--xml-restore-empty-attribute-values
+           (car object) replacements)
+          (newsticker--xml-restore-empty-attribute-values
+           (cdr object) replacements)))
+   ((vectorp object)
+    (apply #'vector
+           (mapcar (lambda (element)
+                     (newsticker--xml-restore-empty-attribute-values
+                      element replacements))
+                   (append object nil))))
+   (t object)))
+
+(defun newsticker--xml-parse-region-preserving-empty-attributes ()
+  "Parse the accessible XML, preserving semantically empty attributes."
+  (let ((source (buffer-substring-no-properties (point-min) (point-max))))
+    (with-temp-buffer
+      (insert source)
+      (let* ((opaque (newsticker--xml-protect-markup-data))
+             (protected (cdr opaque))
+             (empty-values
+              (newsticker--xml-protect-empty-attribute-values (car opaque))))
+        ;; Restore opaque XML before parsing; only the temporary attribute
+        ;; tokens stay changed in this scratch buffer.
+        (dolist (replacement protected)
+          (goto-char (point-min))
+          (while (search-forward (car replacement) nil t)
+            (replace-match (cdr replacement) t t)))
+        (newsticker--xml-restore-empty-attribute-values
+         (xml-parse-region (point-min) (point-max))
+         empty-values)))))
+
 (defun newsticker--remove-xml-comments-preserving-markup ()
   "Remove XML comments in the accessible buffer, preserving opaque data."
   (save-excursion
@@ -1100,12 +1209,9 @@ This is a lexical pass for opaque XML regions, not an XML parser."
     (let* ((opaque-markup (newsticker--xml-protect-markup-data))
            (opaque-prefix (car opaque-markup))
            (protected (cdr opaque-markup)))
-      ;; a very very dirty workaround to overcome the
-      ;; problems with the newest (20030621) xml.el:
-      ;; remove all unnecessary whitespace
-      (goto-char (point-min))
-      (while (re-search-forward ">[ \t\r\n]+<" nil t)
-        (replace-match "><" nil t))
+      ;; Do not collapse whitespace between tags globally: in mixed
+      ;; content it is text (for example, the space between two inline
+      ;; elements in a description).
       ;; and another brutal workaround (20031105)!  For some
       ;; reason the xml parser does not like the colon in the
       ;; doctype name "rdf:RDF"
@@ -1136,21 +1242,15 @@ This is a lexical pass for opaque XML regions, not an XML parser."
       ;; https://www.thefreedictionary.com/_/WoD/rss.aspx?type=quote
       (goto-char (point-min))
       (while (re-search-forward
-              "<description>\\(<img.*?\\)</description>" nil t)
+              "<description>\\([ \\t\\r\\n]*<img\\(?:.\\|\\n\\)*?\\)</description>"
+              nil t)
         ;; Do not wrap an HTML-looking string from opaque XML data.
         (unless (save-match-data
                   (string-match-p (regexp-quote opaque-prefix) (match-string 1)))
           (replace-match
-           "<description><![CDATA[ \\1 ]]></description>")))
-      ;; And another one (20051123)! XML parser does not
-      ;; like this: <yweather:location city="Frankfurt/Main"
-      ;; region="" country="GM" />
-      ;; try to "fix" empty attributes
-      ;; This happened for
-      ;; http://xml.weather.yahoo.com/forecastrss?p=GMXX0040&u=f
-      (goto-char (point-min))
-      (while (re-search-forward "\\(<[^>]*\\)=\"\"" nil t)
-        (replace-match "\\1=\" \""))
+           "<description><![CDATA[\\1]]></description>")))
+      ;; Preserve empty attribute values verbatim; turning them into a
+      ;; space changes the meaning of attributes such as `href'.
       ;; Restore CDATA, PIs, and DTD literals after all textual workarounds.
       (let ((case-fold-search nil))
         (dolist (replacement protected)

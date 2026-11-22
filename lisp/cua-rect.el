@@ -123,13 +123,18 @@ Activates the region if needed.  Only lasts until the region is deactivated."
   :keymap cua--rectangle-keymap
   (cond
    (cua-rectangle-mark-mode
-    (add-hook 'deactivate-mark-hook
-              (lambda () (cua-rectangle-mark-mode -1)))
+    (add-hook 'deactivate-mark-hook #'cua--rectangle-deactivate-mark nil t)
     (add-hook 'post-command-hook #'cua--rectangle-post-command nil t)
     (cua-set-rectangle-mark))
    (t
+    (remove-hook 'deactivate-mark-hook #'cua--rectangle-deactivate-mark t)
     (cua--deactivate-rectangle)
     (remove-hook 'post-command-hook #'cua--rectangle-post-command t))))
+
+(defun cua--rectangle-deactivate-mark ()
+  "Turn off CUA Rectangle Mark mode after the active region is deactivated."
+  (when cua-rectangle-mark-mode
+    (cua-rectangle-mark-mode -1)))
 
 ;;; Rectangle geometry
 

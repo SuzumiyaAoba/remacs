@@ -444,13 +444,10 @@ Conversion is done based upon the current selected style."
 			       (nth 0 footnote-style-alist))))))
     (concat
      (regexp-quote footnote-start-tag) "\\("
-     ;; Hack to avoid repetition of repetition.
-     ;; FIXME: I'm not sure the added * makes sense at all; there is
-     ;; always a single number within the footnote-{start,end}-tag pairs.
-     (if (string-match "[^\\]\\\\\\{2\\}*[*+?]\\'" regexp)
-	 (substring regexp 0 -1)
-       regexp)
-     "*\\)" (regexp-quote footnote-end-tag))))
+     ;; STYLE's regexp already describes a complete footnote index.  Adding
+     ;; another repetition here can turn a required index into an empty one.
+     regexp
+     "\\)" (regexp-quote footnote-end-tag))))
 
 (defun footnote--refresh-footnotes (&optional index-regexp)
   "Redraw all footnotes.

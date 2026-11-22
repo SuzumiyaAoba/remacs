@@ -336,6 +336,9 @@ pub trait FrameWindowBackend {
     }
     fn raise(&self, frame_id: usize) -> Result<(), String>;
     fn lower(&self, frame_id: usize) -> Result<(), String>;
+    fn restack(&self, _frame_id: usize, _relative_to: usize, _above: bool) -> Result<(), String> {
+        Err("native relative frame restacking is unavailable".to_owned())
+    }
     /// Return native frame IDs from topmost to bottommost.
     fn frame_list_z_order(&self) -> Result<Vec<usize>, String> {
         Err("native frame stacking order is unavailable".to_owned())

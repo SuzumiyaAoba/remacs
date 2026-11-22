@@ -188,12 +188,13 @@ See `org-crypt-disable-auto-save'."
       (message "org-decrypt: Decrypting entry with auto-save-mode enabled.  This may cause leakage."))
      ((eq org-crypt-disable-auto-save 'encrypt)
       (message "org-decrypt: Enabling re-encryption on auto-save.")
-      (add-hook 'auto-save-hook
-		(lambda ()
-		  (message "org-crypt: Re-encrypting all decrypted entries due to auto-save.")
-		  (org-encrypt-entries))
-		nil t))
+      (add-hook 'auto-save-hook #'org-crypt--encrypt-before-auto-save nil t))
      (t nil))))
+
+(defun org-crypt--encrypt-before-auto-save ()
+  "Re-encrypt decrypted entries before auto-saving the current buffer."
+  (message "org-crypt: Re-encrypting all decrypted entries due to auto-save.")
+  (org-encrypt-entries))
 
 (defun org-crypt-key-for-heading ()
   "Return the encryption key(s) for the current heading.

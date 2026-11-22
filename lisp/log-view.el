@@ -771,29 +771,29 @@ additionally if INTERACTIVE is non-nil and `vc--pick-or-revert' returns
         (let ((deleted 0))
           (save-excursion
             (dolist (rev (if reverse (reverse marked) marked))
-              ;; Unmark each revision *before* copying it.
-              ;; Then if there is a conflict such that a cherry-pick
-              ;; fails, after resolving that conflict and committing the
-              ;; cherry-pick, the right revisions will be marked to
-              ;; resume the original multiple cherry-pick operation.
-              ;; FIXME: This doesn't work so long as the backend
-              ;; functions just give up completely if there is a
-              ;; conflict (which behavior is also a FIXME).  Then in
-              ;; fact the user has to mark the revision again.
               (log-view-goto-rev rev)
-              (log-view-unmark-entry 1)
-              (cl-case
-                  (vc--pick-or-revert rev reverse interactive delete
-                                      (if no-comment
-                                          (vc-call-backend log-view-vc-backend
-                                                           'get-change-comment
-                                                           nil rev)
-                                        t)
-                                      nil
-                                      log-view-vc-backend)
-                (deleted (incf deleted)
-                         (when interactive
-                           (setq interactive 'no-confirm))))))
+              ;; Keep the mark if the backend signals before applying this
+              ;; revision (for example, on a cherry-pick conflict).  The
+              ;; remaining marked revisions then still describe the work to
+              ;; resume after the user resolves the conflict.
+              (let ((result
+                     (vc--pick-or-revert rev reverse interactive delete
+                                         (if no-comment
+                                             (vc-call-backend log-view-vc-backend
+                                                              'get-change-comment
+                                                              nil rev)
+                                           t)
+                                         nil
+                                         log-view-vc-backend)))
+                (when (buffer-live-p buf)
+                  (with-current-buffer buf
+                    (save-excursion
+                      (when (log-view-goto-rev rev)
+                        (log-view-unmark-entry 1)))))
+                (cl-case result
+                  (deleted (incf deleted)
+                           (when interactive
+                             (setq interactive 'no-confirm)))))))
           (let ((new-commits (- (length marked) deleted)))
             (when (and (plusp new-commits)
                        (vc-find-backend-function log-view-vc-backend

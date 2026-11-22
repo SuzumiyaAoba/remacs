@@ -1327,7 +1327,7 @@ Return the result of `process-file' - zero for success."
    (list "\\.\\(?:[0-9]\\|man\\)\\'"
          '(let ((loc (Man-support-local-filenames)))
             (cond ((eq loc 'man-db) "man -l")
-                  ((eq loc 'man) "man")
+                  ((eq loc 'man) "man ./\\=?\\=")
                   (t
                    "cat * | tbl | nroff -man -h | col -b"))))
    (list "\\.\\(?:[0-9]\\|man\\)\\.g?z\\'"
@@ -1335,14 +1335,14 @@ Return the result of `process-file' - zero for success."
             (cond ((eq loc 'man-db)
                    "man -l")
                   ((eq loc 'man)
-                   "man")
+                   "man ./\\=?\\=")
                   (t "gunzip -qc * | tbl | nroff -man -h | col -b")))
          ;; Optional decompression.
          '(concat "gunzip" (if dired-guess-shell-gzip-quiet " -q")))
    (list "\\.[0-9]\\.Z\\'"
          '(let ((loc (Man-support-local-filenames)))
             (cond ((eq loc 'man-db) "man -l")
-                  ((eq loc 'man) "man")
+                  ((eq loc 'man) "man ./\\=?\\=")
                   (t "zcat * | tbl | nroff -man -h | col -b")))
          ;; Optional conversion to gzip format.
          '(concat "znew" (if dired-guess-shell-gzip-quiet " -q")

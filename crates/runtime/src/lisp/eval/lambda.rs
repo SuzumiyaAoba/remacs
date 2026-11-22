@@ -512,7 +512,7 @@ impl Interp {
                         let parsed = crate::lisp::bytecode::parse_argdesc(self, &Value::Int(*desc));
                         Value::cons(
                             Value::Int(parsed.req as i128),
-                            Value::Int(parsed.max as i128),
+                            Value::Int(parsed.reported_max),
                         )
                     }
                     _ => Value::Lambda(l.clone()),

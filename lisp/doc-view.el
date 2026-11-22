@@ -2455,26 +2455,39 @@ to the next best mode."
     (doc-view-fallback-mode)))
 
 ;;;###autoload
+(defun doc-view--restore-minor-mode-after-revert ()
+  "Return a function to restore Doc View minor mode after reverting."
+  (let ((was-enabled doc-view-minor-mode))
+    (lambda ()
+      (when (and was-enabled (not (derived-mode-p 'doc-view-mode)))
+        (doc-view-minor-mode 1)))))
+
+(defun doc-view--disable-minor-mode-on-major-mode-change ()
+  "Disable Doc View minor mode before changing the major mode."
+  (doc-view-minor-mode -1))
+
+(defun doc-view--minor-mode-change ()
+  "Install or remove Doc View minor-mode hooks."
+  (if doc-view-minor-mode
+      (progn
+        (add-hook 'change-major-mode-hook
+                  #'doc-view--disable-minor-mode-on-major-mode-change nil t)
+        (add-hook 'revert-buffer-restore-functions
+                  #'doc-view--restore-minor-mode-after-revert nil t))
+    (remove-hook 'change-major-mode-hook
+                 #'doc-view--disable-minor-mode-on-major-mode-change t)
+    (remove-hook 'revert-buffer-restore-functions
+                 #'doc-view--restore-minor-mode-after-revert t)))
+
 (define-minor-mode doc-view-minor-mode
   "Toggle displaying buffer via Doc View (Doc View minor mode).
 
 See the command `doc-view-mode' for more information on this mode."
   :lighter " DocView"
+  (doc-view--minor-mode-change)
   (when doc-view-minor-mode
-    (add-hook 'change-major-mode-hook
-              (lambda ()
-                (doc-view-minor-mode -1))
-              nil t)
-    ;; OpenDocuments are archive files, so their editing mode is
-    ;; archive-mode.  When editing and saving a file in that archive,
-    ;; it'll automatically revert the archive buffer.  Take care to
-    ;; re-enable `doc-view-minor-mode' in that case.
-    (add-hook 'revert-buffer-restore-functions
-              (lambda ()
-                (lambda ()
-                  (unless (derived-mode-p 'doc-view-mode)
-                    (doc-view-minor-mode 1))))
-              nil t)
+    ;; OpenDocuments are archive files, so re-enable Doc View after their
+    ;; contents are reverted.
     (message
      "%s"
      (substitute-command-keys

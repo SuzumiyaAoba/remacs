@@ -849,10 +849,10 @@ to their attributes."
 	  (apply
 	   #'max
 	   (cons
-	    (1+ (length "password"))
+	    (1+ (string-width "password"))
 	    (mapcar
 	     ;; Attribute names have a leading ":", which will be suppressed.
-	     (lambda (attribute) (length (symbol-name (car attribute))))
+	     (lambda (attribute) (string-width (symbol-name (car attribute))))
 	     attributes)))))
     (cons
      ;; The password widget.
@@ -864,7 +864,7 @@ to their attributes."
 		      :size 0
 		      :format ,(concat
 				"%{%t%}:"
-				(make-string (- padding (length "password")) ? )
+				(make-string (- padding (string-width "password")) ? )
 				"%v\n"))
      (mapcar
       (lambda (attribute)
@@ -878,7 +878,7 @@ to their attributes."
 			   :size 0
 			   :format ,(concat
 				     "%{%t%}:"
-				     (make-string (- padding (length name)) ? )
+				     (make-string (- padding (string-width name)) ? )
 				     "%v\n"))))
       attributes))))
 

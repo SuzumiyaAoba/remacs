@@ -3620,7 +3620,7 @@ fn f_clear_charset_maps(_i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
 
 /// Entry `(prop . TABLE)' in `char-code-property-alist', or nil.
 fn prop_alist_entry(i: &mut Interp, prop: &str) -> Value {
-    let Some(property) = i.intern_soft(prop) else {
+    let Some(property) = i.q_soft(prop) else {
         return Value::Nil;
     };
     prop_alist_entry_symbol(i, property)

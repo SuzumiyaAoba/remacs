@@ -924,6 +924,47 @@ impl PlatformWindow for WindowsWindow {
             .detach();
     }
 
+    fn restack_relative_to(&self, sibling: rwh::RawWindowHandle, above: bool) -> Result<()> {
+        let rwh::RawWindowHandle::Win32(sibling) = sibling else {
+            anyhow::bail!("sibling is not a Windows window");
+        };
+        let sibling = HWND(sibling.hwnd.get() as _);
+        let hwnd = self.0.hwnd;
+        if hwnd == sibling {
+            return Ok(());
+        }
+        let insert_after = if above {
+            let preceding = unsafe { GetWindow(sibling, GW_HWNDPREV) }.unwrap_or_default();
+            if preceding == hwnd {
+                return Ok(());
+            }
+            if preceding.is_invalid() {
+                HWND_TOP
+            } else {
+                preceding
+            }
+        } else {
+            let following = unsafe { GetWindow(sibling, GW_HWNDNEXT) }.unwrap_or_default();
+            if following == hwnd {
+                return Ok(());
+            }
+            sibling
+        };
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                Some(insert_after),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            )
+            .context("unable to restack window relative to sibling")?;
+        }
+        Ok(())
+    }
+
     fn set_always_on_top(&self, always_on_top: bool) {
         let hwnd = self.0.hwnd;
         let insert_after = if always_on_top {

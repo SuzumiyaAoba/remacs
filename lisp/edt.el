@@ -1926,6 +1926,14 @@ created."
 ;;;  Turning the EDT Emulation on and off.
 ;;;
 
+(defun edt--activate-mark ()
+  "Enable EDT selection mode when the mark is activated."
+  (edt-select-mode t))
+
+(defun edt--deactivate-mark ()
+  "Disable EDT selection mode when the mark is deactivated."
+  (edt-select-mode nil))
+
 ;;;###autoload
 (defun edt-emulation-on ()
   "Turn on EDT Emulation."
@@ -1967,12 +1975,8 @@ created."
   ;; Make highlighting of selected text work properly for EDT commands.
   (setq edt-orig-transient-mark-mode
         (default-value 'transient-mark-mode))
-  (add-hook 'activate-mark-hook
-            (lambda ()
-              (edt-select-mode t)))
-  (add-hook 'deactivate-mark-hook
-            (lambda ()
-              (edt-select-mode nil)))
+  (add-hook 'activate-mark-hook #'edt--activate-mark)
+  (add-hook 'deactivate-mark-hook #'edt--deactivate-mark)
   ;;  Load user's EDT custom key bindings file, if it exists.
   ;;  Otherwise, use the default bindings.
   (if (load "edt-user" t t)
@@ -1982,6 +1986,8 @@ created."
 (defun edt-emulation-off()
   "Select original global key bindings, disabling EDT Emulation."
   (interactive)
+  (remove-hook 'activate-mark-hook #'edt--activate-mark)
+  (remove-hook 'deactivate-mark-hook #'edt--deactivate-mark)
   (use-global-map global-map)
   (if (not edt-keep-current-page-delimiter)
       (setq page-delimiter edt-orig-page-delimiter))

@@ -269,20 +269,19 @@ For instance: /home/<username>/.semanticdb/!usr!include!BROWSE"
 	 (buf (get-buffer-create "*semanticdb ebrowse*")))
     (message "semanticdb-ebrowse %s" B)
     (when (file-exists-p B)
-      (set-buffer buf)
-      (buffer-disable-undo buf)
-      (erase-buffer)
-      (insert-file-contents B)
-      (let ((ans nil)
-	    (efcn (symbol-function 'ebrowse-show-progress)))
-        (fset 'ebrowse-show-progress (lambda (&rest _junk) nil))
-        (unwind-protect ; Protect against errors with ebrowse
-	    (setq ans (list B (ebrowse-read)))
-	  ;; These items must always happen
-	  (erase-buffer)
-	  (fset 'ebrowse-show-fcn efcn)
-	  )
-	ans))))
+      (with-current-buffer buf
+        (buffer-disable-undo)
+        (erase-buffer)
+        (insert-file-contents B)
+        (let ((ans nil)
+              (efcn (symbol-function 'ebrowse-show-progress)))
+          (fset 'ebrowse-show-progress (lambda (&rest _junk) nil))
+          (unwind-protect ; Protect against errors with ebrowse
+              (setq ans (list B (ebrowse-read)))
+            ;; These items must always happen.
+            (erase-buffer)
+            (fset 'ebrowse-show-progress efcn))
+          ans)))))
 
 ;;; Methods for creating a database or tables
 ;;

@@ -2591,23 +2591,23 @@ the end of the current result or async record is reached."
 ; list ==>
 ;      "[]" | "[" value ( "," value )* "]" | "[" result ( "," result )* "]"
 
-;; FIXME: This is fragile: it relies on the assumption that all the
-;; non-ASCII strings output by GDB, including names of the source
-;; files, values of string variables in the inferior, etc., are all
-;; encoded in the same encoding.
-
 (defcustom gdb-mi-decode-strings t
   "When non-nil, decode octal escapes in GDB output into non-ASCII text.
 
-If the value is a coding-system, use that coding-system to decode
-the bytes reconstructed from octal escapes.  Any other non-nil value
-means to decode using the coding-system set for the GDB process."
+If the value is a coding-system, use it to decode octal escapes in
+all fields.  With any other non-nil value, GDB metadata uses the
+process coding system, while octal escapes in MI `value' fields are
+left as raw bytes because inferior strings may use another encoding."
   :type '(choice
           (const :tag "Don't decode" nil)
           (const :tag "Decode using default coding-system" t)
           (coding-system :tag "Decode using this coding-system"))
   :group 'gdb
   :version "25.1")
+
+(defvar gdb-mi--current-string-key nil
+  "Result key for the GDB/MI c-string currently being parsed.
+This lets the default decoder distinguish GDB metadata from inferior values.")
 
 (defun gud-gdbmi-marker-filter (string)
   "Filter GDB/MI output."
@@ -2950,8 +2950,15 @@ END-CHAR is the ending delimiter; will stop at end-of-buffer otherwise."
         (warn "Unrecognized escape char: %c" (following-char))))
       (setq start (point)))
     (push (buffer-substring start (1- (point))) pieces)
-    (let ((s (apply #'concat (nreverse pieces))))
-      (if (and octals-used gdb-mi-decode-strings)
+    (let* ((s (apply #'concat (nreverse pieces)))
+           (inferior-value
+            (and (symbolp gdb-mi--current-string-key)
+                 (string= (symbol-name gdb-mi--current-string-key) "value")))
+           (decode-strings
+            (and octals-used gdb-mi-decode-strings
+                 (or (coding-system-p gdb-mi-decode-strings)
+                     (not inferior-value)))))
+      (if decode-strings
           (let ((coding
                  (if (coding-system-p gdb-mi-decode-strings)
                      gdb-mi-decode-strings
@@ -2990,7 +2997,8 @@ END-CHAR is the ending delimiter; will stop at end-of-buffer otherwise."
       (progn
         (goto-char (match-end 0))
         (let* ((variable (intern (match-string 1)))
-               (value (gdb-mi--parse-value)))
+               (value (let ((gdb-mi--current-string-key variable))
+                        (gdb-mi--parse-value))))
           (cons variable value)))
     (gdb-mi--parse-value)))
 

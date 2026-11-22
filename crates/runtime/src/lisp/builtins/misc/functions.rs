@@ -55,7 +55,7 @@ pub(super) fn f_gensym(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
 /// the arglist malformed → None → invalid-function.
 #[derive(Clone, Copy)]
 pub(crate) enum FunctionArity {
-    Range { min: usize, max: usize },
+    Range { min: usize, max: i128 },
     Many { min: usize },
     Unevalled,
 }
@@ -120,7 +120,10 @@ pub(crate) fn raw_arglist_arity(i: &mut Interp, arglist_v: &Value) -> Option<Fun
     if !dotted.is_nil() {
         return None;
     }
-    Some(FunctionArity::Range { min, max })
+    Some(FunctionArity::Range {
+        min,
+        max: max as i128,
+    })
 }
 
 /// A Lambda's `Arity': parsed arg fields for source closures, the
@@ -150,7 +153,7 @@ fn lambda_arity(i: &mut Interp, l: &std::rc::Rc<Lambda>) -> Option<FunctionArity
     } else {
         Some(FunctionArity::Range {
             min,
-            max: min.checked_add(l.optional.len())?,
+            max: min.checked_add(l.optional.len())? as i128,
         })
     }
 }
@@ -172,7 +175,7 @@ fn lambda_arity_raw(i: &mut Interp, l: &std::rc::Rc<Lambda>) -> Option<FunctionA
                 } else {
                     FunctionArity::Range {
                         min: parsed.req,
-                        max: parsed.max,
+                        max: parsed.reported_max,
                     }
                 })
             }
@@ -257,7 +260,7 @@ pub(super) fn f_func_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     };
     let (min, max) = match arity {
         FunctionArity::Range { min, max } => {
-            (Value::integer(min as i128), Value::integer(max as i128))
+            (Value::integer(min as i128), Value::integer(max))
         }
         FunctionArity::Many { min } => (Value::integer(min as i128), Value::Sym(i.q("many"))),
         FunctionArity::Unevalled => {
@@ -295,7 +298,7 @@ pub(super) fn f_subr_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
         other => return Err(i.wrong_type_mut("subrp", other)),
     };
     let (min, max) = match arity {
-        FunctionArity::Range { min, max } => (min as i128, Value::integer(max as i128)),
+        FunctionArity::Range { min, max } => (min as i128, Value::integer(max)),
         FunctionArity::Many { min } => (min as i128, Value::Sym(i.q("many"))),
         // Unevalled only ever comes from a Subr (lambdas can't be
         // unevalled), so the special-form table lookup stays on its name.

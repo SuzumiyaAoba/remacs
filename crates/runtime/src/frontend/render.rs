@@ -10883,7 +10883,7 @@ fn remapped_named_face(
     name: &str,
     depth: u32,
 ) -> StyleMix {
-    if let Some(face) = i.intern_soft(name) {
+    if let Some(face) = i.q_soft(name) {
         face_value_with_remapping(i, ctx, faces, &Value::Sym(face), depth, &mut Vec::new())
     } else {
         ctx.builtin(i, name, depth)

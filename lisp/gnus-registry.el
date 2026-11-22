@@ -997,12 +997,14 @@ Uses `gnus-registry-marks' to find what shortcuts to install."
                  gnus-registry-misc-menus)
            (gnus-message 9 "Defined mark handling function %s"
                          function-name))))))
-  (add-hook 'gnus-summary-menu-hook
-            (lambda ()
-              (easy-menu-add-item
-               gnus-summary-misc-menu
-               nil
-               (cons "Registry Marks" gnus-registry-misc-menus)))))
+  (add-hook 'gnus-summary-menu-hook #'gnus-registry--add-misc-menu))
+
+(defun gnus-registry--add-misc-menu ()
+  "Add the current registry mark commands to the summary menu."
+  (easy-menu-add-item
+   gnus-summary-misc-menu
+   nil
+   (cons "Registry Marks" gnus-registry-misc-menus)))
 
 ;; use like this:
 ;; (defalias 'gnus-user-format-function-M #'gnus-registry-article-marks-to-chars)
@@ -1209,6 +1211,7 @@ non-nil."
   (remove-hook 'gnus-read-newsrc-el-hook #'gnus-registry-load)
 
   (remove-hook 'gnus-summary-prepare-hook #'gnus-registry-register-message-ids)
+  (remove-hook 'gnus-summary-menu-hook #'gnus-registry--add-misc-menu)
   nil)
 
 (defun gnus-registry-install-p ()

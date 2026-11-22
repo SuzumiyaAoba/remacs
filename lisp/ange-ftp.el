@@ -2687,7 +2687,11 @@ The main reason for this alist is to deal with file versions in VMS.")
      (let ((eol (progn (end-of-line) (point))))
        (beginning-of-line)
        (if (re-search-forward directory-listing-before-filename-regexp eol t)
-	   (buffer-substring (point) eol)))))
+           ;; The regexp's first group ends before the separating spaces.
+           ;; Preserve any additional leading spaces as part of the name.
+           (buffer-substring
+            (if (match-end 1) (min eol (1+ (match-end 1))) (point))
+            eol)))))
 
 ;; This deals with the F switch. Should also do something about
 ;; unquoting names obtained with the SysV b switch and the GNU Q
@@ -3214,7 +3218,9 @@ system TYPE.")
 
 ;; Returns non-nil if should transfer FILE in binary mode.
 (defun ange-ftp-binary-file (file)
-  (string-match-p ange-ftp-binary-file-name-regexp file))
+  (and (stringp ange-ftp-binary-file-name-regexp)
+       (not (equal ange-ftp-binary-file-name-regexp ""))
+       (string-match-p ange-ftp-binary-file-name-regexp file)))
 
 (defun ange-ftp-write-region
     (start end filename &optional append visit _lockname mustbenew)
@@ -4340,9 +4346,9 @@ NEWNAME should be the name to give the new compressed or uncompressed file.")
 	       (ange-ftp-message "Compressing %s...done" abbr))
 	  (if (zerop (buffer-size))
 	      (progn
+		(ange-ftp-copy-file-internal tmp2 nfile t nil msg2)
 		(let (ange-ftp-process-verbose)
-		  (delete-file file))
-		(ange-ftp-copy-file-internal tmp2 nfile t nil msg2))))
+		  (delete-file file))))
       (ange-ftp-del-tmp-name tmp1)
       (ange-ftp-del-tmp-name tmp2))))
 
@@ -4376,9 +4382,9 @@ NEWNAME should be the name to give the new compressed or uncompressed file.")
 	       (ange-ftp-message "Uncompressing %s...done" abbr))
 	  (if (zerop (buffer-size))
 	      (progn
+		(ange-ftp-copy-file-internal tmp2 nfile t nil msg2)
 		(let (ange-ftp-process-verbose)
-		  (delete-file file))
-		(ange-ftp-copy-file-internal tmp2 nfile t nil msg2))))
+		  (delete-file file))))
       (ange-ftp-del-tmp-name tmp1)
       (ange-ftp-del-tmp-name tmp2))))
 

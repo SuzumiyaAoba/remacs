@@ -2006,14 +2006,14 @@ see the doc of that variable if you want to add names to the list."
       (setq b (point))
       (princ (mapcar #'abbreviate-file-name tags-table-list) (current-buffer))
       (make-text-button b (point) 'type 'tags-select-tags-table
-                        'etags-table (car tags-table-list))
+                        'etags-table (copy-sequence tags-table-list))
       (insert "\n"))
     (while set-list
       (unless (eq (car set-list) tags-table-list)
 	(setq b (point))
 	(princ (mapcar #'abbreviate-file-name (car set-list)) (current-buffer))
 	(make-text-button b (point) 'type 'tags-select-tags-table
-                          'etags-table (car (car set-list)))
+                          'etags-table (copy-sequence (car set-list)))
 	(insert "\n"))
       (setq set-list (cdr set-list)))
     (when tags-file-name
@@ -2063,10 +2063,22 @@ see the doc of that variable if you want to add names to the list."
   "Select the tags table named on this line."
   (interactive (list (or (button-at (line-beginning-position))
                          (error "No tags table on current line"))))
-  (let ((name (button-get button 'etags-table)))
-    (visit-tags-table name)
+  (let ((selection (button-get button 'etags-table)))
+    (if (consp selection)
+        (progn
+          ;; Visit one member to load its table buffer, then select the set
+          ;; shown by this button instead of searching for the first set that
+          ;; happens to contain that member.
+          (visit-tags-table (car selection))
+          (setq tags-table-list (copy-sequence selection)
+                tags-table-computed-list nil
+                tags-table-computed-list-for nil
+                tags-table-list-pointer nil
+                tags-table-list-started-at nil)
+          (tags-table-check-computed-list))
+      (visit-tags-table selection))
     (select-tags-table-quit)
-    (message "Tags table now %s" name)))
+    (message "Tags table now %s" selection)))
 
 (defun select-tags-table-quit ()
   "Kill the buffer and delete the selected window."

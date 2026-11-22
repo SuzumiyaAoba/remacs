@@ -152,9 +152,52 @@ ensures refilling is only done once per command that causes a change,
 regardless of the number of after-change calls from commands doing
 complex processing.")
 
-(defun refill-after-change-function (_beg end _len)
+(defvar-local refill-doit-start nil
+  "Marker at the start of the current command's combined change region.")
+
+(defvar-local refill-doit-end nil
+  "Marker at the end of the current command's combined change region.")
+
+(defun refill-clear-doit ()
+  "Clear the pending refill positions."
+  (when (markerp refill-doit-start)
+    (set-marker refill-doit-start nil))
+  (when (markerp refill-doit-end)
+    (set-marker refill-doit-end nil))
+  (setq refill-doit nil
+        refill-doit-start nil
+        refill-doit-end nil))
+
+(defun refill-fill-paragraphs-between (beg end)
+  "Refill every paragraph overlapping the range from BEG through END."
+  (let ((end-marker (copy-marker end t))
+        (start-marker (copy-marker beg)))
+    (unwind-protect
+        (save-excursion
+          (goto-char start-marker)
+          (fill-forward-paragraph -1)
+          (while (<= (point) (marker-position end-marker))
+            (let ((paragraph-start (copy-marker (point))))
+              (refill-fill-paragraph-at paragraph-start)
+              (goto-char paragraph-start)
+              (fill-forward-paragraph 1)
+              (when (<= (point) (marker-position paragraph-start))
+                (if (< (marker-position paragraph-start) (point-max))
+                    (goto-char (1+ (marker-position paragraph-start)))
+                  (goto-char (point-max))))
+              (set-marker paragraph-start nil))))
+      (set-marker start-marker nil)
+      (set-marker end-marker nil))))
+
+(defun refill-after-change-function (beg end _len)
   "Set `refill-doit'.  Used by `after-change-functions'."
   (unless undo-in-progress
+    (unless (markerp refill-doit-start)
+      (setq refill-doit-start (copy-marker beg)))
+    (unless (markerp refill-doit-end)
+      (setq refill-doit-end (copy-marker end t)))
+    (when (> end (marker-position refill-doit-end))
+      (set-marker refill-doit-end end))
     (setq refill-doit end)))
 
 (defun refill-post-command-function ()
@@ -170,8 +213,9 @@ complex processing.")
        (when (aref auto-fill-chars (char-before))
 	 ;; Respond to the same characters as auto-fill (other than
 	 ;; newline, covered below).
-	 (refill-fill-paragraph-at refill-doit)
-	 (setq refill-doit nil)))
+	 (refill-fill-paragraphs-between
+          (marker-position refill-doit-start)
+          (marker-position refill-doit-end)))
       ((or 'quoted-insert 'fill-paragraph 'fill-region) nil)
       ((or 'newline 'newline-and-indent 'open-line 'indent-new-comment-line
            'default-indent-new-line 'reindent-then-newline-and-indent)
@@ -194,10 +238,12 @@ complex processing.")
                    (memq this-command
                          '(backward-kill-word kill-region
                            backward-delete-char-untabify delete-backward-char)))))
-         (refill-fill-paragraph-at refill-doit)
+         (refill-fill-paragraphs-between
+          (marker-position refill-doit-start)
+          (marker-position refill-doit-end))
          (when keep-point-at-bol
            (beginning-of-line)))))
-    (setq refill-doit nil)))
+    (refill-clear-doit)))
 
 (defun refill-pre-command-function ()
   "Pre-command function to do refilling (conditionally)."
@@ -205,8 +251,10 @@ complex processing.")
     ;; A previous setting of `refill-doit' didn't result in a refill,
     ;; because it was a self-insert-command.  Since the next command is
     ;; something else, do the refill now.
-    (refill-fill-paragraph-at refill-doit)
-    (setq refill-doit nil)))
+    (refill-fill-paragraphs-between
+     (marker-position refill-doit-start)
+     (marker-position refill-doit-end))
+    (refill-clear-doit)))
 
 (defvar refill-saved-state nil)
 

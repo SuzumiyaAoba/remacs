@@ -4341,6 +4341,15 @@ impl Window {
         self.platform_window.lower_without_focus();
     }
 
+    /// Place this window immediately above or below SIBLING without changing
+    /// keyboard focus.
+    pub fn restack_relative_to(&self, sibling: &Window, above: bool) -> Result<()> {
+        let sibling = <Window as HasWindowHandle>::window_handle(sibling)
+            .map_err(|error| anyhow!("unable to read sibling window handle: {error}"))?;
+        self.platform_window
+            .restack_relative_to(sibling.as_raw(), above)
+    }
+
     /// Set whether the current window stays above ordinary windows without requesting focus.
     pub fn set_always_on_top(&self, always_on_top: bool) {
         self.platform_window.set_always_on_top(always_on_top);

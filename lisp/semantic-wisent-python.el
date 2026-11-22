@@ -436,6 +436,123 @@ a list.  In python, this can happen with `import' statements."
 ;;; Overridden Semantic API.
 ;;
 
+(defun semantic-wisent-python--identifier-chain-before (position)
+  "Return a dotted identifier chain ending immediately before POSITION."
+  (save-excursion
+    (with-syntax-table python-mode-syntax-table
+      (goto-char position)
+      (skip-chars-backward " \t\n\r")
+      (let (parts done)
+        (while (not done)
+          (let ((end (point)))
+            (skip-syntax-backward "w_")
+            (if (= end (point))
+                (setq done t)
+              (push (buffer-substring-no-properties (point) end) parts)
+              (skip-chars-backward " \t\n\r")
+              (if (eq (char-before) ?.)
+                  (backward-char)
+                (setq done t)))))
+        (nreverse parts)))))
+
+(defun semantic-wisent-python--call-at-open (open)
+  "Return the function name before the opening parenthesis at OPEN."
+  (when (eq (char-after open) ?\()
+    (let ((name (semantic-wisent-python--identifier-chain-before open)))
+      (unless (member (car name)
+                      '("if" "while" "for" "with" "except" "assert"
+                        "return" "yield" "class" "def" "lambda" "not"
+                        "and" "or" "in" "is" "async" "await"))
+        name))))
+
+(defun semantic-wisent-python--open-parens-at (point)
+  "Return positions of open delimiters enclosing POINT, outermost first."
+  (let ((open (nth 1 (syntax-ppss point)))
+        (previous nil)
+        opens)
+    (while (and open (or (null previous) (< open previous)))
+      (push open opens)
+      (setq previous open
+            open (nth 1 (syntax-ppss open))))
+    opens))
+
+(defun semantic-wisent-python--assignment-start (point)
+  "Return a bounded statement start before POINT."
+  (save-excursion
+    (goto-char (or (car (semantic-wisent-python--open-parens-at point)) point))
+    (let ((start (line-beginning-position)))
+      (while (and (> start (point-min))
+                  (progn
+                    (goto-char start)
+                    (forward-line -1)
+                    (end-of-line)
+                    (skip-chars-backward " \t")
+                    (eq (char-before) ?\\)))
+        (setq start (line-beginning-position)))
+      start)))
+
+(defun semantic-wisent-python--assignment-target
+    (operator operator-depth start)
+  "Return the simple Python assignment target before OPERATOR."
+  (let* ((prev (char-before operator))
+         (prev2 (and (> operator (1+ start))
+                     (char-before (1- operator))))
+         (end (cond ((memq prev '(?+ ?- ?* ?/ ?% ?& ?| ?^ ?@))
+                     (if (and (memq prev '(?* ?/))
+                              (eq prev2 prev))
+                         (- operator 2)
+                       (1- operator)))
+                    ((and (memq prev '(?< ?>)) (eq prev2 prev))
+                     (- operator 2))
+                    ((eq prev ?:) (1- operator))
+                    (t operator))))
+    (save-excursion
+      (goto-char end)
+      (skip-chars-backward " \t\n\r")
+      (let ((colon
+             (save-excursion
+               (when (search-backward ":" start t)
+                 (let ((state (syntax-ppss)))
+                   (and (= (car state) operator-depth)
+                        (not (nth 3 state))
+                        (not (nth 4 state))
+                        (point)))))))
+        (when colon
+          (goto-char colon)))
+      (semantic-wisent-python--identifier-chain-before (point)))))
+
+(defun semantic-wisent-python--current-assignment (point)
+  "Find a Python assignment operator before POINT without parsing sexps."
+  (let* ((ppss (syntax-ppss point))
+         (start (semantic-wisent-python--assignment-start point))
+         (best nil)
+         (best-depth nil))
+    (unless (or (nth 3 ppss) (nth 4 ppss))
+      (save-excursion
+        (goto-char point)
+        (while (search-backward "=" start t)
+          (let* ((operator (point))
+                 (state (syntax-ppss operator))
+                 (prev (char-before operator))
+                 (prev2 (and (> operator (1+ start))
+                             (char-before (1- operator))))
+                 (next (char-after (1+ operator)))
+                 (depth (car state))
+                 (operator-p
+                  (and (not (nth 3 state))
+                       (not (nth 4 state))
+                       (not (eq next ?=))
+                       (not (eq prev ?=))
+                       (not (or (eq prev ?!)
+                                (and (memq prev '(?< ?>))
+                                     (not (eq prev2 prev)))))))
+            (when (and operator-p
+                       (or (null best-depth) (< depth best-depth)))
+              (setq best operator
+                    best-depth depth)))))
+      (when best
+        (semantic-wisent-python--assignment-target best best-depth start)))))
+
 (define-mode-local-override semantic-lex python-mode
   (start end &optional depth length)
   "Lexically analyze Python code in current buffer.
@@ -463,21 +580,29 @@ To be implemented for Python!  For now just return nil."
   (let ((name (semantic-tag-name tag)))
     (concat (mapconcat #'identity (split-string name "\\.") "/") ".py")))
 
-;; Override ctxt-current-function/assignment defaults, since they do
-;; not work properly with Python code, even leading to endless loops
-;; (see bug #xxxxx).
-(define-mode-local-override semantic-ctxt-current-function python-mode (&optional _point)
+;; Use Python's syntax state instead of the generic Semantic sexp walkers.
+(define-mode-local-override semantic-ctxt-current-function python-mode (&optional point)
   "Return the current function call the cursor is in at POINT.
 The function returned is the one accepting the arguments that
 the cursor is currently in.  It will not return function symbol if the
 cursor is on the text representing that function."
-  nil)
+  (save-excursion
+    (when point (goto-char point))
+    (let ((ppss (syntax-ppss)))
+      (unless (or (nth 3 ppss) (nth 4 ppss))
+        (catch 'function
+          (dolist (open (reverse (semantic-wisent-python--open-parens-at
+                                  (point))))
+            (when (eq (char-after open) ?\()
+              (let ((name (semantic-wisent-python--call-at-open open)))
+                (when name
+                  (throw 'function name))))))))))
 
-(define-mode-local-override semantic-ctxt-current-assignment python-mode (&optional _point)
+(define-mode-local-override semantic-ctxt-current-assignment python-mode (&optional point)
   "Return the current assignment near the cursor at POINT.
 Return a list as per `semantic-ctxt-current-symbol'.
 Return nil if there is nothing relevant."
-  nil)
+  (semantic-wisent-python--current-assignment (or point (point))))
 
 ;;; Tag Formatting
 ;;

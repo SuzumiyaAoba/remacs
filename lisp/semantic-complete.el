@@ -350,6 +350,12 @@ which have the same name."
   :abstract t)
 
 
+(defun semantic-complete--clear-current-matched-tag ()
+  "Clear the current matched tag after the next command."
+  (remove-hook 'pre-command-hook
+               #'semantic-complete--clear-current-matched-tag t)
+  (setq semantic-complete-current-matched-tag nil))
+
 (defun semantic-complete-current-match ()
   "Calculate a match from the current completion environment.
 Save this in our completion variable.  Make sure that variable
@@ -419,7 +425,7 @@ Return value can be:
       ;; Make sure it is up to date by clearing it if the user dares
       ;; to touch the keyboard.
       (add-hook 'pre-command-hook
-		(lambda () (setq semantic-complete-current-matched-tag nil)))
+                #'semantic-complete--clear-current-matched-tag nil t)
       )
     ;; Return it
     answer

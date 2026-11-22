@@ -227,15 +227,13 @@ must be set in `ldap-host-parameters-alist'."
 
 (defun smime-ask-passphrase (&optional cache-key)
   "Asks the passphrase to unlock the secret key.
-If `cache-key' and `password-cache' is non-nil then cache the
-password under `cache-key'."
+If `cache-key' is non-nil, use it to look up a cached passphrase.
+Call `password-cache-add' only after the passphrase has been verified."
   (let ((passphrase
 	 (password-read
 	  "Passphrase for secret key (RET for no passphrase): " cache-key)))
     (if (string= passphrase "")
 	nil
-      ;; FIXME test passphrase works before caching it.
-      (and passphrase cache-key (password-cache-add cache-key passphrase))
       passphrase)))
 
 ;; OpenSSL wrappers.
@@ -285,6 +283,8 @@ key and certificate itself."
 		(with-current-buffer smime-details-buffer
 		  (insert-file-contents tmpfile)
 		  (delete-file tmpfile)))
+	  (when passphrase
+	    (password-cache-add (expand-file-name keyfile) passphrase))
 	  (delete-region b e)
 	  (insert-buffer-substring buffer)
 	  (goto-char b)
@@ -422,6 +422,8 @@ in the buffer specified by `smime-details-buffer'."
 	    (insert-file-contents tmpfile)
 	    (delete-file tmpfile)))
 	(progn
+	  (when passphrase
+	    (password-cache-add (expand-file-name keyfile) passphrase))
 	  (delete-region b e)
 	  (when from
 	    (insert "From: " from "\n"))

@@ -241,13 +241,26 @@ PORT defaults to 6600 and HOST defaults to localhost."
             (process-put proc 'ready t)
             (unless (eq (match-end 0) (point-max))
               (error "Unexpected trailing text"))
-            (let ((error-text (match-string 1)))
+              (let ((error-text (match-string 1))
+                    (async-p (process-get proc 'mpc-proc-async)))
               (delete-region (point) (point-max))
               (let ((callback (process-get proc 'callback)))
                 (process-put proc 'callback nil)
+                (process-put proc 'mpc-proc-async nil)
                 (if error-text
-                    (process-put proc 'mpc-proc-error error-text))
-                (funcall callback)))))))))
+                    (progn
+                      (process-put proc 'mpc-proc-error error-text)
+                      (if async-p
+                          (let ((err (condition-case err
+                                         (progn (mpc-proc-check proc) nil)
+                                       (mpc-proc-error err))))
+                            ;; Keep queued async commands moving, then report
+                            ;; the failed response from the process filter.
+                            (funcall callback)
+                            (when err
+                              (signal (car err) (cdr err))))
+                        (funcall callback)))
+                  (funcall callback))))))))))
 
 (defun mpc--proc-connect (host)
   (let ((port 6600)
@@ -339,6 +352,10 @@ PORT defaults to 6600 and HOST defaults to localhost."
       (process-put proc 'mpc-proc-error nil)
       (signal 'mpc-proc-error error-text))))
 
+(defun mpc--unknown-tag-error-p (error-data)
+  "Return non-nil if ERROR-DATA reports an unsupported MPD tag."
+  (string-match-p "Unknown tag" (error-message-string error-data)))
+
 (defun mpc-proc-sync (&optional proc)
   "Wait for MPC process until it is idle again.
 Return the buffer in which the process is/was running."
@@ -372,6 +389,7 @@ which will be concatenated with proper quoting before passing them to MPD."
       ;; Wait for any pending async command to terminate.
       (mpc-proc-sync proc)
       (process-put proc 'ready nil)
+      (process-put proc 'mpc-proc-async (and callback t))
       (with-current-buffer (process-buffer proc)
         (erase-buffer)
         (mpc--debug "Send \"%s\"" cmd)
@@ -658,20 +676,18 @@ The songs are returned as alists."
                    (mpc-union (mpc-cmd-find tag1 value)
                               (mpc-cmd-find tag2 value))))
                 (t
-                 (condition-case nil
+                 (condition-case err
                      (mpc-proc-buf-to-alists
                       (mpc-proc-cmd (list "find" (symbol-name tag) value)))
                    (mpc-proc-error
-                    ;; If `tag' is not one of the expected tags, MPD burps
-                    ;; about not having the relevant table.  FIXME: check
-                    ;; the kind of error.
-                    (error "Unknown tag %s" tag)
-                    (let ((res ()))
-                      (setq value (cons tag value))
-                      (dolist (song (mpc-proc-buf-to-alists
-                                     (mpc-proc-cmd "listallinfo")))
-                        (if (member value song) (push song res)))
-                      res)))))
+                    (if (mpc--unknown-tag-error-p err)
+                        (let ((res ()))
+                          (setq value (cons tag value))
+                          (dolist (song (mpc-proc-buf-to-alists
+                                         (mpc-proc-cmd "listallinfo")))
+                            (if (member value song) (push song res)))
+                          res)
+                      (signal (car err) (cdr err)))))))
                mpc--find-memoize)))
 
 (defun mpc-cmd-list (tag &optional other-tag value)
@@ -761,16 +777,14 @@ The songs are returned as alists."
                  (mpc-cmd-list tag2 other-tag value))))
 
    ((null other-tag)
-    (condition-case nil
+    (condition-case err
         (mapcar #'cdr (mpc-proc-cmd-to-alist (list "list" (symbol-name tag))))
       (mpc-proc-error
-       ;; If `tag' is not one of the expected tags, MPD burps about not
-       ;; having the relevant table.
-       ;; FIXME: check the kind of error.
-       (error "MPD does not know this tag %s" tag)
-       (mpc-assq-all tag (mpc-proc-cmd-to-alist "listallinfo")))))
+       (if (mpc--unknown-tag-error-p err)
+           (mpc-assq-all tag (mpc-proc-cmd-to-alist "listallinfo"))
+         (signal (car err) (cdr err)))))
    (t
-    (condition-case nil
+    (condition-case err
         (if (mpc-cmd-special-tag-p other-tag)
             (signal 'mpc-proc-error "Not implemented")
           (mapcar #'cdr
@@ -778,13 +792,10 @@ The songs are returned as alists."
                    (list "list" (symbol-name tag)
                          (symbol-name other-tag) value))))
       (mpc-proc-error
-       ;; DAMN!! the 3-arg form of `list' is new in 0.12 !!
-       ;; FIXME: check the kind of error.
-       (let ((other-songs (mpc-cmd-find other-tag value)))
-         (mpc-assq-all tag
-                       ;; Don't use `nconc' now that mpc-cmd-find may
-                       ;; return a memoized result.
-                       (apply #'append other-songs))))))))
+       (if (mpc--unknown-tag-error-p err)
+           (let ((other-songs (mpc-cmd-find other-tag value)))
+             (mpc-assq-all tag (apply #'append other-songs)))
+         (signal (car err) (cdr err)))))))
 
 (defun mpc-cmd-stop (&optional callback)
   (mpc-proc-cmd "stop" callback))
@@ -2573,6 +2584,11 @@ If stopped, start playback."
 (defun mpc-prev ()
   "Jump to the beginning of the current song, or to the previous song."
   (interactive)
+  ;; A fast-rewind timer retains its own songtime and would otherwise
+  ;; seek back to the stale position on its next tick.
+  (when (and (bound-and-true-p mpc--faster-toggle-timer)
+             (fboundp 'mpc--faster-stop))
+    (mpc--faster-stop))
   (let ((time (cdr (assq 'time mpc-status))))
     ;; Here we rely on the fact that string-to-number silently ignores
     ;; everything after a non-digit char.

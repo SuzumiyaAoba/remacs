@@ -2527,6 +2527,29 @@ automatically."
 (custom-add-option 'gnus-article-prepare-hook 'diary-from-outlook-gnus)
 
 (defvar rmail-buffer)
+(defvar rmail-view-buffer)
+(defvar rmail-mime-mbox-buffer)
+(defvar rmail-mime-coding-system)
+(declare-function rmail-buffers-swapped-p "rmail" ())
+
+(defun diary--outlook-rmail-mime-body (entity message-buffer)
+  "Return the first decoded text body in MIME ENTITY.
+MESSAGE-BUFFER contains the original message used for body markers."
+  (let ((children (rmail-mime-entity-children entity)))
+    (if children
+        (catch 'body
+          (dolist (child children)
+            (let ((body (diary--outlook-rmail-mime-body child message-buffer)))
+              (when (and body (not (equal body "")))
+                (throw 'body body))))
+          nil)
+      (when (eq 0 (string-match "\\`text/"
+                                (car (rmail-mime-entity-type entity))))
+        (with-temp-buffer
+          (let ((rmail-mime-mbox-buffer message-buffer)
+                (rmail-mime-coding-system nil))
+            (rmail-mime-insert-decoded-text entity)
+            (buffer-string))))))
 
 (defun diary-from-outlook-rmail (&optional noconfirm)
   "Maybe snarf diary entry from Outlook-generated message in Rmail.
@@ -2534,14 +2557,24 @@ Unless the optional argument NOCONFIRM is non-nil (which is the case when
 this function is called interactively), then if an entry is found the
 user is asked to confirm its addition."
   (interactive "p")
-  ;; FIXME maybe the body needs rmail-mm decoding, in which case
-  ;; there is no single buffer with both body and subject, sigh.
+  (require 'rmailmm)
   (with-current-buffer rmail-buffer
     (let ((subject (mail-fetch-field "subject"))
-          (body (buffer-substring (save-excursion
-                                    (rfc822-goto-eoh)
-                                    (point))
-                                  (point-max))))
+          (body (let* ((message-buffer
+                        (if (rmail-buffers-swapped-p)
+                            rmail-view-buffer
+                          (current-buffer)))
+                       (entity (rmail-mime-parse))
+                       (decoded
+                        (and (rmail-mime-entity-p entity)
+                             (diary--outlook-rmail-mime-body
+                              entity message-buffer))))
+                  (or decoded
+                      (buffer-substring
+                       (save-excursion
+                         (rfc822-goto-eoh)
+                         (point))
+                       (point-max)))))
       (when (diary-from-outlook-internal subject body t)
         (when (or noconfirm (y-or-n-p "Snarf diary entry? "))
           (diary-from-outlook-internal subject body)

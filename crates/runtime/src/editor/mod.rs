@@ -6983,6 +6983,13 @@ pub(crate) fn frame_is_nextstep(i: &Interp, frame: &crate::editor::FrameRef) -> 
     )
 }
 
+pub(crate) fn frame_is_gpui(i: &Interp, frame: &crate::editor::FrameRef) -> bool {
+    matches!(
+        frame_parameter_value(i, frame, "window-system"),
+        Value::Sym(system) if i.symbol_name(system) == "gpui"
+    )
+}
+
 fn f_display_color_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let display = a.get(0).cloned().unwrap_or(Value::Nil);
     let frame = crate::lisp::builtins::misc::decode_display(i, &display)?;
@@ -9214,6 +9221,31 @@ pub(crate) fn key_seq_elt(i: &mut Interp, x: &Value) -> Result<Option<i128>, Flo
         }
         _ => Ok(None),
     }
+}
+
+/// Return the current definition for a key emitted by `map-keymap'.  The
+/// iterator snapshots key order, but definitions must be read from the live
+/// keymap because an earlier callback can update a later binding.
+pub(crate) fn keymap_binding_for_map(
+    i: &mut Interp,
+    km: &Value,
+    key: &Value,
+    own_only: bool,
+) -> Result<Option<Value>, Flow> {
+    let range_start = match key {
+        Value::Cons(cell) => {
+            let binding = cell.borrow();
+            match (&binding.car, &binding.cdr) {
+                (Value::Int(from), Value::Int(_)) => Some(*from),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let Some(key) = range_start.or(key_seq_elt(i, key)?) else {
+        return Ok(None);
+    };
+    access_keymap(i, km, key, true, own_only)
 }
 
 fn reordered_event_code(i: &mut Interp, symbol: SymId) -> Result<i128, Flow> {
@@ -11857,7 +11889,7 @@ fn f_substitute_command_keys(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
                 '{' => {
                     // \{map} — insert the map's description.
                     if let Some((name, next)) = take_until(&chars, pos + 2, '}') {
-                        let id = i.intern_soft(&(name).to_unicode_lossy());
+                        let id = i.q_soft(&(name).to_unicode_lossy());
                         let kmv = id.filter(|id| i.bound_p(*id)).map(|id| i.symbol_value(id));
                         match kmv.filter(|v| is_keymap(i, v)) {
                             Some(km) => {
@@ -11939,7 +11971,7 @@ fn f_substitute_command_keys(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult
                 '<' => {
                     // \<map> — select keymap context for following \[cmd].
                     if let Some((name, next)) = take_until(&chars, pos + 2, '>') {
-                        let id = i.intern_soft(&(name).to_unicode_lossy());
+                        let id = i.q_soft(&(name).to_unicode_lossy());
                         ctx_map = id.filter(|id| i.bound_p(*id)).map(|id| i.symbol_value(id));
                         pos = next;
                         continue;
@@ -21310,7 +21342,7 @@ fn f_yes_or_no_p(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         _ => String::new().into(),
     };
     let suffix = i
-        .intern_soft("yes-or-no-prompt")
+        .q_soft("yes-or-no-prompt")
         .and_then(|id| match i.symbol_value(id) {
             Value::Str(s) => Some(s.borrow().clone()),
             _ => None,
@@ -22127,7 +22159,7 @@ pub(crate) fn syntax_table_entries(i: &Interp) -> Option<SynTable> {
     let table = match local {
         Some(t) => t,
         None => i
-            .intern_soft("remacs--standard-syntax-table")
+            .q_soft("remacs--standard-syntax-table")
             .map(|ssid| i.symbol_value(ssid))
             .filter(|t| is_syntax_table(i, t))?,
     };

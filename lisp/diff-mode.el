@@ -1504,6 +1504,18 @@ With a prefix argument, convert unified format to context format."
                                 old-undo)))
                   )))))))))
 
+(defun diff--normal-range-count (start end)
+  "Return the number of lines represented by START and optional END."
+  (if end
+      (1+ (- (string-to-number (substring end 1))
+             (string-to-number start)))
+    1))
+
+(defun diff--normal-diff-switch-prefix (text from to)
+  "Replace line prefixes FROM with TO in normal diff TEXT."
+  (replace-regexp-in-string (concat "^" (regexp-quote from) " ")
+                            (concat to " ") text t t))
+
 (defun diff-reverse-direction (start end)
   "Reverse the direction of the diffs.
 START and END are either taken from the region (if a prefix arg is given) or
@@ -1516,7 +1528,7 @@ else cover the whole buffer."
 	(inhibit-read-only t))
     (save-excursion
       (goto-char start)
-      (while (and (re-search-forward "^\\(\\([-*][-*][-*] \\)\\(.+\\)\n\\([-+][-+][-+] \\)\\(.+\\)\\|\\*\\{15\\}.*\n\\*\\*\\* \\(.+\\) \\*\\*\\*\\*\\|@@ -\\([0-9,]+\\) \\+\\([0-9,]+\\) @@.*\\)$" nil t)
+      (while (and (re-search-forward "^\\(\\([-*][-*][-*] \\)\\(.+\\)\n\\([-+][-+][-+] \\)\\(.+\\)\\|\\*\\{15\\}.*\n\\*\\*\\* \\(.+\\) \\*\\*\\*\\*\\|@@ -\\([0-9,]+\\) \\+\\([0-9,]+\\) @@.*\\|\\([0-9]+\\)\\(,[0-9]+\\)?\\([acd]\\)\\([0-9]+\\)\\(,[0-9]+\\)?\\)$" nil t)
 		  (< (point) end))
 	(combine-after-change-calls
 	  (cond
@@ -1568,7 +1580,62 @@ else cover the whole buffer."
 			  (setq first nil last nil)
 			  (memq c (if diff-valid-unified-empty-line
                                       '(?\s ?\n) '(?\s)))))
-		(forward-line 1))))))))))
+		(forward-line 1))))
+           ;; A normal diff hunk header, such as 1c1 or 2,3d1.
+           ((match-beginning 9)
+            (let* ((old-start (match-string 9))
+                   (old-end (match-string 10))
+                   (command (match-string 11))
+                   (new-start (match-string 12))
+                   (new-end (match-string 13))
+                   (old-range (concat old-start (or old-end "")))
+                   (new-range (concat new-start (or new-end "")))
+                   (reverse-command (pcase command ("a" "d") ("d" "a") (_ "c"))))
+              (replace-match (concat new-range reverse-command old-range) nil t)
+              (forward-line 1)
+              (pcase command
+                ("c"
+                 (let ((old-beg (point)))
+                   (dotimes (_ (diff--normal-range-count old-start old-end))
+                     (unless (looking-at "< ")
+                       (error "Malformed normal diff change hunk"))
+                     (forward-line 1))
+                   (let ((separator-beg (point)))
+                     (unless (looking-at "---\\s-*$")
+                       (error "Malformed normal diff change hunk"))
+                     (forward-line 1)
+                     (let ((new-beg (point)))
+                       (dotimes (_ (diff--normal-range-count new-start new-end))
+                         (unless (looking-at "> ")
+                           (error "Malformed normal diff change hunk"))
+                         (forward-line 1))
+                       (let ((body-end (point))
+                             (old-text (buffer-substring old-beg separator-beg))
+                             (separator (buffer-substring separator-beg new-beg))
+                             (new-text (buffer-substring new-beg (point))))
+                         (delete-region old-beg body-end)
+                         (goto-char old-beg)
+                         (insert (diff--normal-diff-switch-prefix new-text ">" "<")
+                                 separator
+                                 (diff--normal-diff-switch-prefix old-text "<" ">")))))))
+                ((or "a" "d")
+                 (let* ((count (if (equal command "a")
+                                   (diff--normal-range-count new-start new-end)
+                                 (diff--normal-range-count old-start old-end)))
+                        (prefix (if (equal command "a") ">" "<"))
+                        (replacement-prefix (if (equal command "a") "<" ">"))
+                        (body-beg (point)))
+                   (dotimes (_ count)
+                     (unless (looking-at (concat (regexp-quote prefix) " "))
+                       (error "Malformed normal diff insertion/deletion hunk"))
+                     (forward-line 1))
+                   (let ((body-end (point))
+                         (body (buffer-substring body-beg (point))))
+                     (delete-region body-beg body-end)
+                     (goto-char body-beg)
+                     (insert (diff--normal-diff-switch-prefix
+                              body prefix replacement-prefix)))))))))
+	))))))))
 
 (defun diff-fixup-modifs (start end)
   "Fixup the hunk headers (in case the buffer was modified).
@@ -2460,6 +2527,25 @@ applied.  Other non-nil values are reserved."
                     (looking-at-p diff-hunk-header-re)))))
     (cond ((zerop failures)
            (unless test
+             (unless (or beg end)
+               (dolist (entry buffer-edits)
+                 (with-current-buffer (car entry)
+                   (when (and buffer-file-name
+                              (backup-file-name-p buffer-file-name)
+                              (not diff-apply-hunk-to-backup-file)
+                              (not
+                               (setq-local
+                                diff-apply-hunk-to-backup-file
+                                (yes-or-no-p
+                                 (format "Really apply this diff to %s? "
+                                         (file-name-nondirectory
+                                          buffer-file-name)))))
+                     (user-error "%s"
+                                 (substitute-command-keys
+                                  (format
+                                   "Use %s\\[diff-apply-buffer] to apply it to the other file"
+                                   (and (not reverse)
+                                        "\\[universal-argument] "))))))))
              (dolist (buf-edits (reverse buffer-edits))
                (with-current-buffer (car buf-edits)
                  (dolist (edit (cdr buf-edits))

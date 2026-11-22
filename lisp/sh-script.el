@@ -1368,38 +1368,29 @@ frequently editing existing scripts with different styles.")
 
 
 ;; inferior shell interaction
-;; TODO: support multiple interactive shells
 (defvar-local sh-shell-process nil
-  "The inferior shell process for interaction.")
+  "The inferior shell process used by this buffer for interaction.")
 
 (defvar explicit-shell-file-name)
 
 (defun sh-shell-process (force)
-  "Get a shell process for interaction.
-If FORCE is non-nil and no process found, create one."
+  "Get this buffer's shell process for interaction.
+If FORCE is non-nil and no process is running, create a private shell."
   (if (process-live-p sh-shell-process)
       sh-shell-process
     (setq sh-shell-process
-          (let ((found nil) proc
-                (procs (process-list)))
-            (while (and (not found) procs
-                        (process-live-p (setq proc (pop procs)))
-                        (process-command proc))
-              (when (string-equal sh-shell (file-name-nondirectory
-                                            (car (process-command proc))))
-                (setq found proc)))
-            (or found
-                (and force
-                     (get-buffer-process
-                      (let ((explicit-shell-file-name sh-shell-file)
-                            (display-buffer-overriding-action
-                             '(nil . ((inhibit-same-window . t)))))
-                        ;; We must prevent this `(shell)' call from
-                        ;; switching buffers, so that the variable
-                        ;; `sh-shell-process' is set locally in the
-                        ;; correct buffer.
-                        (save-current-buffer
-                          (shell))))))))))
+          (and force
+               (get-buffer-process
+                (let ((explicit-shell-file-name sh-shell-file)
+                      (display-buffer-overriding-action
+                       '(nil . ((inhibit-same-window . t))))
+                      (shell-buffer
+                       (generate-new-buffer-name
+                        (format "*shell: %s*" (buffer-name)))))
+                  ;; Keep the shell process in its own buffer, but make sure
+                  ;; the buffer-local variable is set in this script buffer.
+                  (save-current-buffer
+                    (shell shell-buffer))))))))
 
 (defun sh-show-shell ()
   "Pop the shell interaction buffer."
@@ -1677,13 +1668,32 @@ OLDFN should be `bash-ts-mode'."
                    oldfn
                  #'sh-mode)))))
 
+(defconst sh-font-lock-variable-in-double-quote-regexp
+  "\\$\\(?:{\\)?\\([[:alpha:]_][[:alnum:]_]*\\|[0-9]+\\|[-#?@!*]\\)"
+  "Regexp matching a shell variable reference.")
+
+(defun sh-font-lock-variable-in-double-quote (limit)
+  "Find a shell variable in double-quoted text before LIMIT."
+  (let (found)
+    (while (and (not found)
+                (re-search-forward sh-font-lock-variable-in-double-quote-regexp
+                                   limit t))
+      (let ((state (save-match-data (syntax-ppss (match-beginning 0)))))
+        (when (and (nth 3 state)
+                   (eq (nth 3 state) ?\")
+                   (not (nth 4 state)))
+          (setq found t))))
+    found))
+
 (defun sh-font-lock-keywords (&optional keywords)
   "Function to get simple fontification based on `sh-font-lock-keywords'.
 This adds rules for comments and assignments."
   (sh-feature sh-font-lock-keywords-var
 	      (when (stringp (sh-feature sh-assignment-regexp))
 		(lambda (list)
-		  `((,(sh-feature sh-assignment-regexp)
+		  `((sh-font-lock-variable-in-double-quote
+		     (1 font-lock-variable-name-face t))
+		    (,(sh-feature sh-assignment-regexp)
 		     1 font-lock-variable-name-face)
 		    ,@keywords
 		    ,@list

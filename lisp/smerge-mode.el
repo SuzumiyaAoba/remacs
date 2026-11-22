@@ -524,9 +524,6 @@ This relies on mode-specific knowledge and thus only works in some
 major modes.  Uses `smerge-resolve-function' to do the actual work."
   (interactive)
   (smerge-match-conflict)
-  ;; FIXME: This ends up removing the refinement-highlighting when no
-  ;; resolution is performed.
-  (smerge-remove-props (match-beginning 0) (match-end 0))
   (let ((md (match-data))
 	(m0b (match-beginning 0))
 	(m1b (match-beginning 1))
@@ -548,12 +545,14 @@ major modes.  Uses `smerge-resolve-function' to do the actual work."
             (smerge-keep-n 3))
            ;; Mode-specific conflict resolution.
            ((ignore-errors
-              (atomic-change-group
-                (if safe
-                    (funcall smerge-resolve-function safe)
-                  (funcall smerge-resolve-function))
-                t))
+              (let ((tick (buffer-chars-modified-tick)))
+                (atomic-change-group
+                  (if safe
+                      (funcall smerge-resolve-function safe)
+                    (funcall smerge-resolve-function))
+                  (/= tick (buffer-chars-modified-tick)))))
             ;; Nothing to do: the resolution function has done it already.
+            (smerge-remove-props m0b m0e)
             nil)
            ;; Non-conflict.
 	   ((and (eq m1e m3e) (eq m1b m3b))
@@ -1471,10 +1470,6 @@ region, or with a numeric prefix.  By default it uses a numeric prefix of 1."
   (interactive
    (list (if (use-region-p) (mark-marker)
            (prefix-numeric-value current-prefix-arg))))
-  ;; FIXME: If OTHERPOS is inside (or next to) another conflict
-  ;; or if there are conflicts between the current conflict and OTHERPOS,
-  ;; we end up messing up the conflict markers.  We should merge the
-  ;; conflicts instead!
   (condition-case err
       (smerge-match-conflict)
     (error (if (not (markerp otherpos)) (signal err)
@@ -1486,6 +1481,12 @@ region, or with a numeric prefix.  By default it uses a numeric prefix of 1."
     (when (integerp otherpos)
       (goto-char (if (>= otherpos 0) end beg))
       (setq otherpos (copy-marker (line-beginning-position (+ otherpos 1)))))
+    (when (let ((from (if (<= end otherpos) end otherpos))
+                (to (if (<= end otherpos) otherpos beg)))
+            (save-excursion
+              (goto-char from)
+              (re-search-forward smerge-parsep-re to t)))
+      (user-error "Cannot extend a conflict across another conflict"))
     (setq text (cond
                 ((<= end otherpos)
                  (buffer-substring end otherpos))

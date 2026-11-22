@@ -284,7 +284,6 @@ will prompt for other arguments."
     (define-key map " " #'reftex-index-view-entry)
     (define-key map "\C-m" #'reftex-index-goto-entry-and-hide)
     (define-key map "\C-i" #'reftex-index-goto-entry)
-    (define-key map "\C-k" #'reftex-index-kill)
     (define-key map "r" #'reftex-index-rescan)
     (define-key map "R" #'reftex-index-Rescan)
     (define-key map "g" #'revert-buffer)
@@ -350,10 +349,7 @@ will prompt for other arguments."
          "--"
          ["Make Start-of-Range" reftex-index-toggle-range-beginning t]
          ["Make End-of-Range" reftex-index-toggle-range-end t]
-         "--"
-         ["Kill Entry" reftex-index-kill nil]
-         "--"
-         ["Undo" reftex-index-undo nil])
+         )
         ("Options"
          ["Context" reftex-index-toggle-context :style toggle
           :selected reftex-index-include-context]
@@ -413,7 +409,7 @@ f / c      Toggle follow mode             / Toggle display of [c]ontext.
 g          Refresh *Index* buffer.
 r / C-u r  Reparse the LaTeX document     / Reparse entire LaTeX document.
 s          Switch to a different index (for documents with multiple indices).
-e / C-k    Edit/Kill the entry.
+e          Edit the entry.
 * | @      Edit specific part of entry: [*]key [|]attribute [@]visual
            With prefix: kill that part.
 \( )        Toggle entry's beginning/end of page range property.
@@ -1077,14 +1073,12 @@ values are accessible individually."
     (reftex-index-change-entry new (format "Removed prefix: %s" prefix))))
 
 (defun reftex-index-kill ()
-  "FIXME: Not yet implemented."
-  (interactive)
-  (error "This function is currently not implemented"))
+  "Signal that deleting index entries is not available."
+  (error "Deleting index entries is not available"))
 
 (defun reftex-index-undo ()
-  "FIXME: Not yet implemented."
-  (interactive)
-  (error "This function is currently not implemented"))
+  "Signal that undoing index entry deletions is not available."
+  (error "Undoing index entry deletions is not available"))
 
 (defun reftex-index-change-entry (new &optional message)
   ;; Change the full context string of the index entry at point to

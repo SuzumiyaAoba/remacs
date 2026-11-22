@@ -3794,25 +3794,89 @@ fn f_frame_window_state_change(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     Ok(Value::from_bool(frame.borrow().window_state_change))
 }
 
-/// `set-frame-size-and-position-pixelwise' — GNU Fset_frame_size_and_
-/// position_pixelwise on a tty: decode_live_frame, nil gravity → 1,
-/// then `Fset_frame_size` (integerp width) and `check_integer_range` on
-/// X/Y — nil X is `wrong-type-argument integerp'.
+/// `set-frame-size-and-position-pixelwise' — retain the requested text
+/// dimensions and position in the frame state. The frontend observes these
+/// values on its next frame snapshot and applies the native window geometry.
 fn f_set_frame_size_and_position_pixelwise(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = frame_live(i, &arg(&a, 0))?;
-    let w = &a[1];
-    if !matches!(w, Value::Nil) {
-        want_int(i, w)?;
+    let frame = frame_live(i, &arg(&a, 0))?;
+    let width_pixels = if a[1].is_nil() {
+        None
+    } else {
+        Some(want_int(i, &a[1])?)
+    };
+    let height_pixels = if a[2].is_nil() {
+        None
+    } else {
+        Some(want_int(i, &a[2])?)
+    };
+    let left = want_int(i, &a[3])?;
+    let top = want_int(i, &a[4])?;
+
+    let char_width = crate::editor::frame_char_width(i, &frame).max(1) as i128;
+    let char_height = crate::editor::frame_char_height(i, &frame).max(1) as i128;
+    let graphical = crate::editor::frame_is_graphical(i, &frame);
+    let (old_width, old_height) = {
+        let frame = frame.borrow();
+        (frame.width, frame.height)
+    };
+    let cell_width = width_pixels.map(|pixels| {
+        usize::try_from(pixels.max(0).saturating_add(char_width / 2) / char_width)
+            .unwrap_or(usize::MAX)
+    });
+    let cell_height = height_pixels.map(|pixels| {
+        usize::try_from(pixels.max(0).saturating_add(char_height / 2) / char_height)
+            .unwrap_or(usize::MAX)
+    });
+    let width = cell_width.unwrap_or(old_width).max(1);
+    let height = cell_height.unwrap_or(old_height).max(1);
+
+    let width_parameter = Value::Sym(i.q("width"));
+    let height_parameter = Value::Sym(i.q("height"));
+    let mut parameters = frame.borrow().params.clone();
+    if cell_width.is_some() {
+        let value = match (graphical, width_pixels) {
+            (true, Some(pixels)) => {
+                Value::cons(Value::Sym(i.q("text-pixels")), Value::Int(pixels.max(0)))
+            }
+            _ => Value::Int(width as i128),
+        };
+        parameters = crate::lisp::eval::plist_put_front(
+            &parameters,
+            &width_parameter,
+            value,
+        );
     }
-    let h = &a[2];
-    if !matches!(h, Value::Nil) {
-        want_int(i, h)?;
+    if cell_height.is_some() {
+        let value = match (graphical, height_pixels) {
+            (true, Some(pixels)) => {
+                Value::cons(Value::Sym(i.q("text-pixels")), Value::Int(pixels.max(0)))
+            }
+            _ => Value::Int(height as i128),
+        };
+        parameters = crate::lisp::eval::plist_put_front(
+            &parameters,
+            &height_parameter,
+            value,
+        );
     }
-    for v in [&a[3], &a[4]] {
-        if !matches!(v, Value::Int(_)) {
-            return Err(i.wrong_type_mut("integerp", v));
-        }
+    if graphical {
+        let left_parameter = Value::Sym(i.q("left"));
+        let top_parameter = Value::Sym(i.q("top"));
+        parameters = crate::lisp::eval::plist_put_front(
+            &parameters,
+            &left_parameter,
+            Value::Int(left),
+        );
+        parameters = crate::lisp::eval::plist_put_front(
+            &parameters,
+            &top_parameter,
+            Value::Int(top),
+        );
     }
+    let mut frame = frame.borrow_mut();
+    frame.width = width;
+    frame.height = height;
+    frame.params = parameters;
     Ok(Value::Nil)
 }
 

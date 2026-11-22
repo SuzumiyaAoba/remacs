@@ -162,6 +162,12 @@ documentation for the function `tempo-complete-tag' for more info.
 (defvar-local tempo-marks nil
   "A list of marks to jump to with \\[tempo-forward-mark] and \\[tempo-backward-mark].")
 
+(defvar tempo--template-first-mark nil
+  "Dynamically bound to the first explicit point mark in a template.")
+
+(defvar tempo--template-mark-tracking nil
+  "Non-nil while tracking explicit point marks in a template.")
+
 (defvar-local tempo-match-finder "\\b\\([[:word:]]+\\)\\="
   "The regexp or function used to find the string to match against tags.
 
@@ -290,26 +296,32 @@ The elements in ELEMENTS can be of several types:
 TEMPLATE is the template to be inserted.  If ON-REGION is non-nil the
 `r' elements are replaced with the current region.  In Transient Mark
 mode, ON-REGION is ignored and assumed true if the region is active."
-  (unwind-protect
-      (progn
-	(if (or (and transient-mark-mode
-		     mark-active))
-	    (setq on-region t))
-	(and on-region
-	     (set-marker tempo-region-start (min (mark) (point)))
-	     (set-marker tempo-region-stop (max (mark) (point))))
-	(if on-region
-	    (goto-char tempo-region-start))
-	(save-excursion
-	  (tempo-insert-mark (point-marker))
-          (mapc (lambda (elt)
-                  (tempo-insert elt on-region))
-		(symbol-value template))
-	  (tempo-insert-mark (point-marker)))
-	(tempo-forward-mark))
-    (tempo-forget-insertions)
-    (and transient-mark-mode
-	 (deactivate-mark))))
+  (let ((tempo--template-first-mark nil)
+        (tempo--template-mark-tracking t)
+        (start (point)))
+    (unwind-protect
+        (progn
+          (if (and transient-mark-mode mark-active)
+              (setq on-region t))
+          (and on-region
+               (set-marker tempo-region-start (min (mark) (point)))
+               (set-marker tempo-region-stop (max (mark) (point))))
+          (if on-region
+              (goto-char tempo-region-start))
+          (setq start (point))
+          (save-excursion
+            (tempo-insert-mark (point-marker))
+            (mapc (lambda (elt)
+                    (tempo-insert elt on-region))
+                  (symbol-value template))
+            (tempo-insert-mark (point-marker)))
+          (if (and tempo--template-first-mark
+                   (= start (marker-position tempo--template-first-mark)))
+              (goto-char tempo--template-first-mark)
+            (tempo-forward-mark)))
+      (tempo-forget-insertions)
+      (and transient-mark-mode
+           (deactivate-mark)))))
 
 ;;;
 ;;; tempo-insert
@@ -338,7 +350,11 @@ possible."
                        (tempo-insert-prompt-compat rest)))
     (`(s ,name) (tempo-insert-named name))
     (`(l . ,rest) (dolist (elt rest) (tempo-insert elt on-region)))
-    ('p (tempo-insert-mark (point-marker)))
+    ('p (let ((mark (point-marker)))
+          (tempo-insert-mark mark)
+          (when (and tempo--template-mark-tracking
+                     (null tempo--template-first-mark))
+            (setq tempo--template-first-mark mark))))
     ('r (if on-region
 	    (goto-char tempo-region-stop)
 	  (tempo-insert-mark (point-marker))))

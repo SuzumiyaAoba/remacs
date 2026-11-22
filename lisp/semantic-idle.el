@@ -1135,10 +1135,23 @@ be called."
     ;; Display the tags.
     (funcall semantic-idle-breadcrumbs-display-function tag-list)))
 
+(defvar-local semantic-idle-breadcrumbs--mode-line-display nil
+  "Non-nil when breadcrumbs are shown in this buffer's mode line.")
+
+(defvar-local semantic-idle-breadcrumbs--mode-line-string nil
+  "Formatted breadcrumb string for the mode line.")
+
+(unless (assq 'semantic-idle-breadcrumbs-mode mode-line-misc-info)
+  (add-to-list 'mode-line-misc-info
+               '(semantic-idle-breadcrumbs-mode
+                 (semantic-idle-breadcrumbs--mode-line-display
+                  ("" semantic-idle-breadcrumbs--mode-line-string " ")))))
+
 (defun semantic-idle-breadcrumbs--display-in-header-line (tag-list)
   "Display the tags in TAG-LIST in the header line of their buffer."
   (let ((width (- (nth 2 (window-edges))
 		  (nth 0 (window-edges)))))
+    (setq semantic-idle-breadcrumbs--mode-line-display nil)
     ;; Format TAG-LIST and put the formatted string into the header
     ;; line.
     (setq header-line-format
@@ -1150,7 +1163,7 @@ be called."
 		(semantic-idle-breadcrumbs--format-tag-list
 		 tag-list
 		 (- width
-		    (length semantic-idle-breadcrumbs-header-line-prefix)))
+		    (string-width semantic-idle-breadcrumbs-header-line-prefix)))
 	      (propertize
 	       "<not on tags>"
 	       'face
@@ -1160,17 +1173,16 @@ be called."
   (force-mode-line-update))
 
 (defun semantic-idle-breadcrumbs--display-in-mode-line (tag-list)
-  "Display the tags in TAG-LIST in the mode line of their buffer.
-TODO THIS FUNCTION DOES NOT WORK YET."
-
-  (error "This function does not work yet")
-
+  "Display the tags in TAG-LIST in the mode line of their buffer."
   (let ((width (- (nth 2 (window-edges))
 		  (nth 0 (window-edges)))))
-    (setq mode-line-format
-	  (replace-regexp-in-string ;; see comment in
-	   "\\(%\\)" "%\\1"         ;; `semantic-idle-breadcrumbs--display-in-header-line'
-	   (semantic-idle-breadcrumbs--format-tag-list tag-list width))))
+    (setq semantic-idle-breadcrumbs--mode-line-display t
+          semantic-idle-breadcrumbs--mode-line-string
+          (replace-regexp-in-string
+           "\\(%\\)" "%\\1"
+           (if tag-list
+               (semantic-idle-breadcrumbs--format-tag-list tag-list width)
+             (propertize "<not on tags>" 'face 'font-lock-comment-face)))))
 
   (force-mode-line-update))
 

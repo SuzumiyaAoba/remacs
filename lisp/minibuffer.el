@@ -38,16 +38,8 @@
 
 ;;; Bugs:
 
-;; - completion-all-sorted-completions lists all the completions, whereas
-;;   it should only lists the ones that `try-completion' would consider.
-;;   E.g.  it should honor completion-ignored-extensions.
-;; - choose-completion can't automatically figure out the boundaries
-;;   corresponding to the displayed completions because we only
-;;   provide the start info but not the end info in
-;;   completion-base-position.
-;; - C-x C-f ~/*/sr ? should not list "~/./src".
-;; - minibuffer-force-complete completes ~/src/emacs/t<!>/lisp/minibuffer.el
-;;   to ~/src/emacs/trunk/ and throws away lisp/minibuffer.el.
+;; - completion-base-position does not always include an end position, so
+;;   completion insertion must infer a replacement end from the suffix.
 
 ;;; Todo:
 
@@ -1959,6 +1951,12 @@ include as `display-sort-function' in completion metadata."
         (when last
           (setcdr last nil)
 
+          ;; Keep file completion cycling consistent with try-completion,
+          ;; which filters ignored extensions and standalone ./ and ../
+          ;; candidates.
+          (when (eq (completion-metadata-get all-md 'category) 'file)
+            (setq all (completion-pcm--filename-try-filter all)))
+
           ;; Delete duplicates: do it after setting last's cdr to nil (so
           ;; it's a proper list), and be careful to reset `last' since it
           ;; may be a different cons-cell.
@@ -2011,6 +2009,23 @@ include as `display-sort-function' in completion metadata."
        ;; If a match is not required, exit after all.
        (exit-minibuffer)))))
 
+(defun minibuffer--force-complete-replace (base end choice file-completion-p)
+  "Insert CHOICE in BASE..END and preserve an already typed file suffix.
+Return non-nil if the resulting text was already present."
+  (let* ((old (buffer-substring-no-properties base end))
+         (choice-length (length choice))
+         (suffix (and file-completion-p
+                      (> choice-length 0)
+                      (eq (aref choice (1- choice-length)) ?/)
+                      (string-prefix-p choice old)
+                      (substring old choice-length)))
+         (replacement (concat choice (or suffix "")))
+         (done (equal old replacement)))
+    (unless done
+      (completion--replace base end replacement))
+    (goto-char (+ base choice-length))
+    done))
+
 (defun minibuffer-force-complete (&optional start end dont-cycle)
   "Complete the minibuffer to an exact match.
 Repeated uses step through the possible completions.
@@ -2018,11 +2033,11 @@ DONT-CYCLE tells the function not to setup cycling."
   (interactive)
   (setq minibuffer-scroll-window nil)
   ;; FIXME: Need to deal with the extra-size issue here as well.
-  ;; FIXME: ~/src/emacs/t<M-TAB>/lisp/minibuffer.el completes to
-  ;; ~/src/emacs/trunk/ and throws away lisp/minibuffer.el.
   (let* ((start (copy-marker (or start (minibuffer--completion-prompt-end))))
          (end (or end (point-max)))
-         ;; (md (completion--field-metadata start))
+         (md (completion--field-metadata start))
+         (file-completion-p
+          (eq (completion-metadata-get md 'category) 'file))
          (all (completion-all-sorted-completions start end))
          (base (+ start (or (cdr (last all)) 0))))
     (cond
@@ -2030,12 +2045,13 @@ DONT-CYCLE tells the function not to setup cycling."
       (completion--message
        (if all "No more completions" "No completions")))
      ((not (consp (cdr all)))
-      (let ((done (equal (car all) (buffer-substring-no-properties base end))))
-        (unless done (completion--replace base end (car all)))
+      (let ((done (minibuffer--force-complete-replace
+                   base end (car all) file-completion-p)))
         (completion--done (buffer-substring-no-properties start (point))
                           'finished (when done "Sole completion"))))
      (t
-      (completion--replace base end (car all))
+      (minibuffer--force-complete-replace
+       base end (car all) file-completion-p)
       (setq end (+ base (length (car all))))
       (completion--done (buffer-substring-no-properties start (point)) 'sole)
       (setq this-command 'completion-at-point) ;For completion-in-region.
@@ -4887,11 +4903,15 @@ the same set of elements."
   "Filter to adjust `all' file completion to the behavior of `try'."
   (when all
     (let ((try ())
-          (re (concat "\\(?:\\`\\.\\.?/\\|"
-                      (regexp-opt completion-ignored-extensions)
-                      "\\)\\'")))
+          (dot-directory-re "\\(?:^\\|/\\)\\.\\.?\\(?:/\\|$\\)")
+          (ignored-extension-re
+           (and completion-ignored-extensions
+                (concat (regexp-opt completion-ignored-extensions) "\\'"))))
       (dolist (f all)
-        (unless (string-match-p re f) (push f try)))
+        (unless (or (string-match-p dot-directory-re f)
+                    (and ignored-extension-re
+                         (string-match-p ignored-extension-re f)))
+          (push f try)))
       (or (nreverse try) all))))
 
 

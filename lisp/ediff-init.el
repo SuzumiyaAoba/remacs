@@ -863,7 +863,7 @@ this variable represents.")
      (:foreground "Navy" :background "sky blue"))
     (((class color))
      (:foreground "white" :background "sky blue" :weight bold))
-    (t (:underline t :stipple "gray3")))
+    (t (:underline t :inverse-video t :weight bold)))
   "Face for highlighting the refinement of the selected diff in buffer A."
   :group 'ediff-highlighting)
 ;; An internal variable.  Ediff takes the face from here.  When unhighlighting,
@@ -883,7 +883,7 @@ this variable represents.")
      (:foreground "Black" :background "cyan"))
     (((class color))
      (:foreground "magenta3" :background "cyan3"))
-    (t (:underline t :stipple "gray3")))
+    (t (:underline t :inverse-video t :weight bold)))
   "Face for highlighting the refinement of the selected diff in buffer B."
   :group 'ediff-highlighting)
 ;; An internal variable.  Ediff takes the face from here.  When unhighlighting,
@@ -906,7 +906,7 @@ this variable represents.")
     (((class color))
      (:foreground "yellow3" :background "Turquoise"
 		  :weight bold))
-    (t (:underline t :stipple "gray3")))
+    (t (:underline t :inverse-video t :weight bold)))
   "Face for highlighting the refinement of the selected diff in buffer C."
   :group 'ediff-highlighting)
 ;; An internal variable.  Ediff takes the face from here.  When unhighlighting,
@@ -928,7 +928,7 @@ this variable represents.")
      :background "#009591")
     (((class color))
      (:foreground "red3" :background "green"))
-    (t (:underline t :stipple "gray3")))
+    (t (:underline t :inverse-video t :weight bold)))
   "Face for highlighting refinement of the selected diff in the ancestor buffer.
 At present, this face is not used and no fine differences are
 computed for the ancestor buffer."

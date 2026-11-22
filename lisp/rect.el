@@ -725,6 +725,11 @@ with a prefix argument, prompt for START-AT and FORMAT."
   "<remap> <next-line>"               #'rectangle-next-line
   "<remap> <previous-line>"           #'rectangle-previous-line)
 
+(defun rectangle--deactivate-mark ()
+  "Turn off Rectangle Mark mode after the active region is deactivated."
+  (when rectangle-mark-mode
+    (rectangle-mark-mode -1)))
+
 ;;;###autoload
 (define-minor-mode rectangle-mark-mode
   "Toggle the region as rectangular.
@@ -733,14 +738,15 @@ Activates the region if it's inactive and Transient Mark mode is
 on.  Only lasts until the region is next deactivated."
   :lighter nil
   (rectangle--reset-crutches)
-  (when rectangle-mark-mode
-    (advice-add 'region-beginning :around #'rectangle--region-beginning)
-    (advice-add 'region-end :around #'rectangle--region-end)
-    (add-hook 'deactivate-mark-hook
-              (lambda () (rectangle-mark-mode -1)))
-    (unless (region-active-p)
-      (push-mark (point) t t)
-      (message "Mark set (rectangle mode)"))))
+  (if rectangle-mark-mode
+      (progn
+        (advice-add 'region-beginning :around #'rectangle--region-beginning)
+        (advice-add 'region-end :around #'rectangle--region-end)
+        (add-hook 'deactivate-mark-hook #'rectangle--deactivate-mark nil t)
+        (unless (region-active-p)
+          (push-mark (point) t t)
+          (message "Mark set (rectangle mode)")))
+    (remove-hook 'deactivate-mark-hook #'rectangle--deactivate-mark t)))
 
 (defun rectangle-exchange-point-and-mark (&optional arg)
   "Like `exchange-point-and-mark' but cycles through the rectangle's corners."

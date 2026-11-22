@@ -1655,7 +1655,7 @@ fn dispatch_ns_service(
 
 fn dispatch_system_sleep_event(i: &mut Interp, sleeping: bool) -> Result<(), Flow> {
     let Some(backend) = i
-        .intern_soft("system-sleep--back-end")
+        .q_soft("system-sleep--back-end")
         .filter(|symbol| i.bound_p(*symbol))
     else {
         return Ok(());
@@ -1667,13 +1667,13 @@ fn dispatch_system_sleep_event(i: &mut Interp, sleeping: bool) -> Result<(), Flo
         return Ok(());
     }
     let Some(make_event) = i
-        .intern_soft("make-sleep-event")
+        .q_soft("make-sleep-event")
         .filter(|symbol| i.fbound_p(*symbol))
     else {
         return Ok(());
     };
     let Some(handler) = i
-        .intern_soft("system-sleep--sleep-event-handler")
+        .q_soft("system-sleep--sleep-event-handler")
         .filter(|symbol| i.fbound_p(*symbol))
     else {
         return Ok(());
@@ -3270,7 +3270,7 @@ pub(super) fn dispatch_text<T: KeyIo>(
     }
 
     let has_input_method = i
-        .intern_soft("current-input-method")
+        .q_soft("current-input-method")
         .is_some_and(|symbol| i.bound_p(symbol) && i.symbol_value(symbol).truthy());
     let mut chars = text.chars();
     if let Some(ch) = chars.next()
@@ -3288,7 +3288,7 @@ pub(super) fn dispatch_text<T: KeyIo>(
     if has_input_method
         && text.chars().all(|character| !character.is_control())
         && let Some(function) = i
-            .intern_soft("input-method-function")
+            .q_soft("input-method-function")
             .map(|symbol| i.symbol_value(symbol))
         && !function.is_nil()
     {
@@ -3559,7 +3559,7 @@ fn translation_map_binding(
     keys: &[i128],
     allow_commands: bool,
 ) -> Result<Option<KeyTranslation>, crate::lisp::Flow> {
-    let Some(symbol) = i.intern_soft(map_name).filter(|symbol| i.bound_p(*symbol)) else {
+    let Some(symbol) = i.q_soft(map_name).filter(|symbol| i.bound_p(*symbol)) else {
         return Ok(None);
     };
     let map = i.symbol_value(symbol);

@@ -873,19 +873,16 @@ to jump to the corresponding spot in the Texinfo source file."
 
   (interactive "P")
   ;; First, remember current location
-  (let (current-location)
+  (let (current-line)
     (save-excursion
       (end-of-line)            ; so as to find section on current line
       (if (re-search-backward
            ;; do not require `texinfo-section-types-regexp' in texnfo-upd.el
            "^@\\(chapter \\|sect\\|subs\\|subh\\|unnum\\|major\\|chapheading \\|heading \\|appendix\\)"
            nil t)
-          (setq current-location
-                (progn
-                  (beginning-of-line)
-                  (buffer-substring (point) (progn (end-of-line) (point)))))
+          (setq current-line (line-number-at-pos))
         ;; else point is located before any section command.
-        (setq current-location "tex")))
+        (setq current-line nil))
     ;; Second, create and format an *Occur* buffer
     (save-excursion
       (goto-char (point-min))
@@ -905,10 +902,11 @@ to jump to the corresponding spot in the Texinfo source file."
                 (or (cadr (assoc (match-string 1) texinfo-section-list)) 2))
           (indent-to-column (+ (current-column) (* 4 (- level 2))))
           (beginning-of-line))))
-    ;; Third, go to line corresponding to location in source file
-    ;; potential bug: two exactly similar `current-location' lines ...
+    ;; Third, return to the same occurrence by its source line number.
     (goto-char (point-min))
-    (re-search-forward current-location nil t)
+    (if current-line
+        (re-search-forward (format "^[ \t]*%d:" current-line) nil t)
+      (re-search-forward "tex" nil t))
     (beginning-of-line)
     ))
 

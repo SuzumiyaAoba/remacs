@@ -5386,7 +5386,6 @@ recursive calls in starting lines of here-documents."
 
 (defun cperl-backward-to-noncomment (lim)
   "Go backward.  Stop at LIM or after non-whitespace not in a comment."
-  ;;XXXX Wrongly understands end-of-multiline strings with # as comment"
   (let (stop p pr)
     (while (and (not stop) (> (point) (or lim (point-min))))
       (skip-chars-backward " \t\n\f" lim)
@@ -5398,7 +5397,8 @@ recursive calls in starting lines of here-documents."
 	    (cperl-unwind-to-safe nil)
 	    (setq pr (get-text-property (point) 'syntax-type))))
       (or (and (looking-at "^[ \t]*\\(#\\|$\\)")
-	       (not (memq pr '(string prestring))))
+	       (not (memq pr '(string prestring)))
+               (not (nth 3 (syntax-ppss))))
 	  (progn (cperl-to-comment-or-eol) (bolp))
 	  (progn
 	    (skip-chars-backward " \t")

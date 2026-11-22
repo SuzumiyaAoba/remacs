@@ -1084,43 +1084,36 @@ fn macroexpand_list_to_vec(i: &mut Interp, list: &Value) -> Result<Option<Vec<Va
     }
 }
 
-/// Expand a general call form while walking its live cons spine.  Reading
-/// each car immediately before expansion lets an earlier macro expander's
-/// edits to later cells affect the result.  If every car is unchanged, keep
-/// the original cons cells instead of rebuilding an equal list.
-fn macroexpand_live_form_spine(
+/// Read and expand each cons cell as it is reached.  In particular, do not
+/// snapshot a scoped body before expanding its first form: a macro expander
+/// can mutate a later body cell, and GNU observes that mutation when it gets
+/// to the cell.  Preserve the original spine when no element was expanded.
+fn macroexpand_live_spine(
     i: &mut Interp,
-    form: &Value,
-    compiler_macro: Option<Value>,
+    list: &Value,
+    mut expand: impl FnMut(&mut Interp, &Value) -> EvalResult,
 ) -> EvalResult {
-    let mut cursor = form.clone();
+    let mut cursor = list.clone();
     let mut cars = Vec::new();
     let mut seen = FxHashSet::default();
     let mut unchanged = true;
-    let mut first = true;
     let mut until_quit = 4096usize;
     let tail = loop {
         match cursor {
             Value::Nil => break Value::Nil,
             Value::Cons(cell) => {
                 if !seen.insert(Rc::as_ptr(&cell) as usize) {
-                    // Keep existing circular-list behavior.  The old helper
-                    // left circular input untouched rather than diagnosing it.
-                    return Ok(form.clone());
+                    // Keep the existing fallback for circular input.
+                    return Ok(list.clone());
                 }
                 let original = crate::lisp::eval::cons_parts(i, &cell)?.0;
-                let expanded = if first {
-                    first = false;
-                    original.clone()
-                } else {
-                    macroexpand_all_recur(i, &original)?
-                };
+                let expanded = expand(i, &original)?;
                 if !crate::lisp::builtins::eq_values_with_interp(i, &original, &expanded) {
                     unchanged = false;
                 }
                 cars.push(expanded);
-                // Fetch cdr after expanding this car.  A macro expander may
-                // have changed this cell or a later part of the spine.
+                // Read the cdr after expansion so mutations to the live
+                // spine are visible to the next iteration.
                 cursor = crate::lisp::eval::cons_parts(i, &cell)?.1;
                 until_quit -= 1;
                 if until_quit == 0 {
@@ -1131,13 +1124,105 @@ fn macroexpand_live_form_spine(
             other => break other,
         }
     };
-    let result = if unchanged {
-        form.clone()
+    if unchanged {
+        Ok(list.clone())
     } else {
-        cars.into_iter()
+        Ok(cars
+            .into_iter()
             .rev()
-            .fold(tail, |tail, car| Value::cons(car, tail))
+            .fold(tail, |tail, car| Value::cons(car, tail)))
+    }
+}
+
+/// Keep ORIGINAL when REBUILT has the same current elements by `eq'.  The
+/// comparison is deliberately made after recursive expansion, since a macro
+/// may have changed a later cell of ORIGINAL in place.
+fn macroexpand_preserve_spine(i: &mut Interp, original: &Value, rebuilt: Value) -> EvalResult {
+    if crate::lisp::builtins::eq_values_with_interp(i, original, &rebuilt) {
+        return Ok(original.clone());
+    }
+    let Some(original_items) = macroexpand_list_to_vec(i, original)? else {
+        return Ok(rebuilt);
     };
+    let Some(rebuilt_items) = macroexpand_list_to_vec(i, &rebuilt)? else {
+        return Ok(rebuilt);
+    };
+    if original_items.len() == rebuilt_items.len()
+        && original_items
+            .iter()
+            .zip(&rebuilt_items)
+            .all(|(a, b)| crate::lisp::builtins::eq_values_with_interp(i, a, b))
+    {
+        Ok(original.clone())
+    } else {
+        Ok(rebuilt)
+    }
+}
+
+fn macroexpand_prepend_preserving(
+    i: &mut Interp,
+    original: &Value,
+    mut prefix: Vec<Value>,
+    tail: Value,
+) -> EvalResult {
+    let rebuilt = prefix
+        .drain(..)
+        .rev()
+        .fold(tail, |tail, item| Value::cons(item, tail));
+    macroexpand_preserve_spine(i, original, rebuilt)
+}
+
+fn macroexpand_list_tail(i: &mut Interp, list: &Value, count: usize) -> Result<Value, Flow> {
+    let mut tail = list.clone();
+    for _ in 0..count {
+        match tail {
+            Value::Cons(ref cell) => tail = crate::lisp::eval::cons_parts(i, cell)?.1,
+            _ => break,
+        }
+    }
+    Ok(tail)
+}
+
+fn macroexpand_live_filtered_body(
+    i: &mut Interp,
+    body: &Value,
+    env_id: SymId,
+    env: &Value,
+    sm: bool,
+    bound: &[SymId],
+    keep_declarations: bool,
+) -> EvalResult {
+    let mut before_code = true;
+    macroexpand_live_spine(i, body, |i, form| {
+        let metadata =
+            matches!(form, Value::Str(_)) || (keep_declarations && is_declare_form(i, form)?);
+        if before_code && metadata {
+            Ok(form.clone())
+        } else {
+            before_code = false;
+            expand_body_filtered(i, env_id, env, sm, bound, form)
+        }
+    })
+}
+
+/// Expand a general call form while walking its live cons spine.  Reading
+/// each car immediately before expansion lets an earlier macro expander's
+/// edits to later cells affect the result.  If every car is unchanged, keep
+/// the original cons cells instead of rebuilding an equal list.
+fn macroexpand_live_form_spine(
+    i: &mut Interp,
+    form: &Value,
+    compiler_macro: Option<Value>,
+) -> EvalResult {
+    let mut first = true;
+    let result = macroexpand_live_spine(i, form, |i, original| {
+        if first {
+            first = false;
+            Ok(original.clone())
+        } else {
+            macroexpand_all_recur(i, original)
+        }
+    })?;
     if let Some(handler) = &compiler_macro {
         if super::equal_values(i, form, &result)? {
             return Ok(form.clone());
@@ -1466,21 +1551,17 @@ fn macroexpand_all_expanded(
                     // `(closure ENV ARGLIST BODY...)': env and arglist
                     // are data positions like `lambda''s arglist.
                     _ if id == closure_id && items.len() >= 3 => {
-                        let mut out = items[..3].to_vec();
                         let bound = binder_syms(i, &items[2])?;
-                        let mut body = items[3..].iter();
-                        for it in &mut body {
-                            if matches!(it, Value::Str(_)) || is_declare_form(i, it)? {
-                                out.push(it.clone());
-                            } else {
-                                out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
-                                break;
-                            }
-                        }
-                        for it in body {
-                            out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
-                        }
-                        return Ok(Value::list(out));
+                        let body = macroexpand_list_tail(i, &expanded, 3)?;
+                        let body = macroexpand_live_filtered_body(
+                            i, &body, env_id, &env, sm, &bound, true,
+                        )?;
+                        return macroexpand_prepend_preserving(
+                            i,
+                            &expanded,
+                            items[..3].to_vec(),
+                            body,
+                        );
                     }
                     sym::DEFVAR | sym::DEFCONST
                         if items.len() >= 2
@@ -1494,52 +1575,47 @@ fn macroexpand_all_expanded(
                             Value::Nil
                         };
                         i.set_symbol(dynvars, Value::cons(items[1].clone(), old))?;
-                        let mut out = items[..2].to_vec();
-                        for item in &items[2..] {
-                            out.push(macroexpand_all_recur(i, item)?);
-                        }
-                        return Ok(Value::list(out));
+                        let body = macroexpand_list_tail(i, &expanded, 2)?;
+                        let body = macroexpand_live_spine(i, &body, macroexpand_all_recur)?;
+                        return macroexpand_prepend_preserving(
+                            i,
+                            &expanded,
+                            items[..2].to_vec(),
+                            body,
+                        );
                     }
                     sym::DEFUN | sym::DEFMACRO if items.len() >= 3 => {
-                        let mut out = items[..3].to_vec();
                         // GNU `macroexp--defun' consumes leading
                         // `(declare ...)' specs itself; they are data,
                         // not code, and must not be descended into
                         // (an `ftype' spec holds a `(function TYPE)'
                         // form that is not a function quote).
                         let bound = binder_syms(i, &items[2])?;
-                        let mut body = items[3..].iter();
-                        for it in &mut body {
-                            if matches!(it, Value::Str(_)) || is_declare_form(i, it)? {
-                                out.push(it.clone());
-                            } else {
-                                out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
-                                break;
-                            }
-                        }
-                        for it in body {
-                            out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
-                        }
-                        return Ok(Value::list(out));
+                        let body = macroexpand_list_tail(i, &expanded, 3)?;
+                        let body = macroexpand_live_filtered_body(
+                            i, &body, env_id, &env, sm, &bound, true,
+                        )?;
+                        return macroexpand_prepend_preserving(
+                            i,
+                            &expanded,
+                            items[..3].to_vec(),
+                            body,
+                        );
                     }
                     sym::LAMBDA if items.len() >= 2 => {
-                        let mut out = items[..2].to_vec();
                         // A bare lambda's declarations are stray macro
                         // forms, unlike defun/defmacro metadata above.
                         let bound = binder_syms(i, &items[1])?;
-                        let mut body = items[2..].iter();
-                        for it in &mut body {
-                            if matches!(it, Value::Str(_)) {
-                                out.push(it.clone());
-                            } else {
-                                out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
-                                break;
-                            }
-                        }
-                        for it in body {
-                            out.push(expand_body_filtered(i, env_id, &env, sm, &bound, it)?);
-                        }
-                        return Ok(Value::list(out));
+                        let body = macroexpand_list_tail(i, &expanded, 2)?;
+                        let body = macroexpand_live_filtered_body(
+                            i, &body, env_id, &env, sm, &bound, false,
+                        )?;
+                        return macroexpand_prepend_preserving(
+                            i,
+                            &expanded,
+                            items[..2].to_vec(),
+                            body,
+                        );
                     }
                     sym::FUNCTION if items.len() == 2 => {
                         // GNU `macroexp--expand-all' only descends into
@@ -1566,27 +1642,23 @@ fn macroexpand_all_expanded(
                                 if litems.len() < head {
                                     return Ok(expanded);
                                 }
-                                let mut lout = litems[..head].to_vec();
                                 let bound = binder_syms(i, &litems[head - 1])?;
-                                let mut lbody = litems[head..].iter();
-                                for it in &mut lbody {
-                                    let declaration =
-                                        is_clo && is_declare_form(i, it)?;
-                                    if matches!(it, Value::Str(_)) || declaration {
-                                        lout.push(it.clone());
-                                    } else {
-                                        lout.push(expand_body_filtered(
-                                            i, env_id, &env, sm, &bound, it,
-                                        )?);
-                                        break;
-                                    }
-                                }
-                                for it in lbody {
-                                    lout.push(expand_body_filtered(
-                                        i, env_id, &env, sm, &bound, it,
-                                    )?);
-                                }
-                                return Ok(Value::list(vec![items[0].clone(), Value::list(lout)]));
+                                let body = macroexpand_list_tail(i, &items[1], head)?;
+                                let body = macroexpand_live_filtered_body(
+                                    i, &body, env_id, &env, sm, &bound, is_clo,
+                                )?;
+                                let lambda = macroexpand_prepend_preserving(
+                                    i,
+                                    &items[1],
+                                    litems[..head].to_vec(),
+                                    body,
+                                )?;
+                                return macroexpand_prepend_preserving(
+                                    i,
+                                    &expanded,
+                                    vec![items[0].clone(), lambda],
+                                    Value::Nil,
+                                );
                             }
                         }
                         return Ok(expanded);
@@ -1601,6 +1673,7 @@ fn macroexpand_all_expanded(
                         let is_letstar = i.sym_is(&items[0], sym::LET_STAR)
                             || i.sym_is(&items[0], sym::AND_LET_STAR);
                         let body_env = sm_filter_env(i, &env, &bound)?;
+                        let body_tail = macroexpand_list_tail(i, &expanded, 2)?;
                         let mut out = vec![items[0].clone()];
                         match &items[1] {
                             Value::Cons(_) => {
@@ -1612,7 +1685,7 @@ fn macroexpand_all_expanded(
                                 loop {
                                     match cur {
                                         Value::Cons(c) => {
-                                            let (b, next) = crate::lisp::eval::cons_parts(i, &c)?;
+                                            let (b, _) = crate::lisp::eval::cons_parts(i, &c)?;
                                             // Env governing this binding's
                                             // init value.
                                             let init_env = if !sm {
@@ -1642,7 +1715,8 @@ fn macroexpand_all_expanded(
                                                 let keep_head = match &b {
                                                     Value::Cons(bc) => i
                                                         .sym_id(
-                                                            &crate::lisp::eval::cons_parts(i, bc)?.0,
+                                                            &crate::lisp::eval::cons_parts(i, bc)?
+                                                                .0,
                                                         )
                                                         .is_some(),
                                                     _ => false,
@@ -1673,11 +1747,19 @@ fn macroexpand_all_expanded(
                                                     if parts.is_empty() {
                                                         b.clone()
                                                     } else {
-                                                        let mut nb = vec![parts[0].clone()];
-                                                        for p in &parts[1..] {
-                                                            nb.push(expand_init(i, p)?);
-                                                        }
-                                                        Value::list(nb)
+                                                        let init_tail =
+                                                            macroexpand_list_tail(i, &b, 1)?;
+                                                        let init_tail = macroexpand_live_spine(
+                                                            i,
+                                                            &init_tail,
+                                                            |i, p| expand_init(i, p),
+                                                        )?;
+                                                        macroexpand_prepend_preserving(
+                                                            i,
+                                                            &b,
+                                                            vec![parts[0].clone()],
+                                                            init_tail,
+                                                        )?
                                                     }
                                                 } else {
                                                     expand_init(i, &b)?
@@ -1690,7 +1772,10 @@ fn macroexpand_all_expanded(
                                                 newvarlist = cell.clone();
                                             }
                                             tail_cell = Some(cell);
-                                            cur = next;
+                                            // An initializer macro may have
+                                            // changed this binding list's
+                                            // live cdr while it was expanded.
+                                            cur = crate::lisp::eval::cons_parts(i, &c)?.1;
                                         }
                                         other => {
                                             // Improper tail: kept verbatim.
@@ -1703,35 +1788,27 @@ fn macroexpand_all_expanded(
                                         }
                                     }
                                 }
+                                newvarlist = macroexpand_preserve_spine(i, &items[1], newvarlist)?;
                                 out.push(newvarlist);
                             }
                             v => out.push(v.clone()),
                         }
-                        // Body under the fully filtered env.
-                        if sm {
+                        // Body under the fully filtered env. Walk its live
+                        // cons spine so earlier macros can update later body
+                        // cells before they are expanded.
+                        let body = if sm {
                             let mark = i.specbind_depth();
                             if let Err(error) = i.specbind(env_id, body_env) {
                                 i.unbind_to(mark)?;
                                 return Err(error);
                             }
-                            let mut body_out = Vec::new();
-                            for it in &items[2..] {
-                                match macroexpand_all_recur(i, it) {
-                                    Ok(e) => body_out.push(e),
-                                    Err(e) => {
-                                        i.unbind_to(mark)?;
-                                        return Err(e);
-                                    }
-                                }
-                            }
+                            let body = macroexpand_live_spine(i, &body_tail, macroexpand_all_recur);
                             i.unbind_to(mark)?;
-                            out.extend(body_out);
+                            body?
                         } else {
-                            for it in &items[2..] {
-                                out.push(macroexpand_all_recur(i, it)?);
-                            }
-                        }
-                        return Ok(Value::list(out));
+                            macroexpand_live_spine(i, &body_tail, macroexpand_all_recur)?
+                        };
+                        return macroexpand_prepend_preserving(i, &expanded, out, body);
                     }
                     sym::SETQ if sm => {
                         // GNU `cl--sm-macroexpand-1': `(setq ...)' with a
@@ -1778,7 +1855,12 @@ fn macroexpand_all_expanded(
                         let nargs = args.len();
                         if nargs == 2 && plain_setq_var(i, &args[0]) {
                             let expr = macroexpand_all_recur(i, &args[1])?;
-                            return Ok(Value::list(vec![items[0].clone(), args[0].clone(), expr]));
+                            return macroexpand_prepend_preserving(
+                                i,
+                                &expanded,
+                                vec![items[0].clone(), args[0].clone(), expr],
+                                Value::Nil,
+                            );
                         }
                         let mut assigns = Vec::new();
                         for pair in args.chunks(2) {
@@ -1797,7 +1879,12 @@ fn macroexpand_all_expanded(
                         let nargs = args.len();
                         if nargs == 2 && plain_setq_var(i, &args[0]) {
                             let expr = macroexpand_all_recur(i, &args[1])?;
-                            return Ok(Value::list(vec![items[0].clone(), args[0].clone(), expr]));
+                            return macroexpand_prepend_preserving(
+                                i,
+                                &expanded,
+                                vec![items[0].clone(), args[0].clone(), expr],
+                                Value::Nil,
+                            );
                         }
                         if nargs % 2 == 1 {
                             // `(signal 'wrong-number-of-arguments
@@ -1939,29 +2026,40 @@ fn macroexpand_all_expanded(
                         // shadows a same-named symbol macro in the
                         // protected form AND the handler bodies.
                         let bound: Vec<SymId> = i.sym_id(&items[1]).into_iter().collect();
-                        let mut out = vec![
-                            items[0].clone(),
-                            items[1].clone(),
-                            expand_body_filtered(i, env_id, &env, sm, &bound, &items[2])?,
-                        ];
-                        for h in &items[3..] {
-                            let is_cons = matches!(h, Value::Cons(_));
-                            if is_cons {
-                                let parts = want_list(i, h).unwrap_or_default();
-                                if !parts.is_empty() {
-                                    let mut nh = vec![parts[0].clone()];
-                                    for p in &parts[1..] {
-                                        nh.push(expand_body_filtered(
-                                            i, env_id, &env, sm, &bound, p,
-                                        )?);
-                                    }
-                                    out.push(Value::list(nh));
-                                    continue;
+                        let mut first = true;
+                        let body_and_handlers = macroexpand_list_tail(i, &expanded, 2)?;
+                        let body_and_handlers =
+                            macroexpand_live_spine(i, &body_and_handlers, |i, form| {
+                                if first {
+                                    first = false;
+                                    return expand_body_filtered(i, env_id, &env, sm, &bound, form);
                                 }
-                            }
-                            out.push(h.clone());
-                        }
-                        return Ok(Value::list(out));
+                                if matches!(form, Value::Cons(_)) {
+                                    if let Some(parts) = macroexpand_list_to_vec(i, form)? {
+                                        if !parts.is_empty() {
+                                            let tail = macroexpand_list_tail(i, form, 1)?;
+                                            let tail = macroexpand_live_spine(i, &tail, |i, form| {
+                                                expand_body_filtered(
+                                                    i, env_id, &env, sm, &bound, form,
+                                                )
+                                            })?;
+                                            return macroexpand_prepend_preserving(
+                                                i,
+                                                form,
+                                                vec![parts[0].clone()],
+                                                tail,
+                                            );
+                                        }
+                                    }
+                                }
+                                Ok(form.clone())
+                            })?;
+                        return macroexpand_prepend_preserving(
+                            i,
+                            &expanded,
+                            items[..2].to_vec(),
+                            body_and_handlers,
+                        );
                     }
                     sym::COND => {
                         // GNU `macroexp--expand-all': `(cond CLAUSES...)'
@@ -1972,21 +2070,25 @@ fn macroexpand_all_expanded(
                         // `cl-macrolet'-bound call in test position
                         // unexpanded (comp-cstr's `with-comp-cstr-
                         // accessors' inside `cond' broke on this).
-                        let mut out = vec![items[0].clone()];
-                        for clause in &items[1..] {
+                        let clauses = macroexpand_list_tail(i, &expanded, 1)?;
+                        let clauses = macroexpand_live_spine(i, &clauses, |i, clause| {
                             if let Value::Cons(_) = clause {
-                                let parts =
-                                    macroexpand_list_to_vec(i, clause)?.unwrap_or_default();
-                                let mut nc = Vec::with_capacity(parts.len());
-                                for p in &parts {
-                                    nc.push(macroexpand_all_recur(i, p)?);
-                                }
-                                out.push(Value::list(nc));
+                                let Some(_) = macroexpand_list_to_vec(i, clause)? else {
+                                    return Ok(Value::Nil);
+                                };
+                                let expanded_clause =
+                                    macroexpand_live_spine(i, clause, macroexpand_all_recur)?;
+                                macroexpand_preserve_spine(i, clause, expanded_clause)
                             } else {
-                                out.push(clause.clone());
+                                Ok(clause.clone())
                             }
-                        }
-                        return Ok(Value::list(out));
+                        })?;
+                        return macroexpand_prepend_preserving(
+                            i,
+                            &expanded,
+                            vec![items[0].clone()],
+                            clauses,
+                        );
                     }
                     _ => {}
                 }

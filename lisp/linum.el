@@ -138,7 +138,7 @@ Linum mode is a buffer-local minor mode."
 ;;;###autoload
 (define-globalized-minor-mode global-linum-mode linum-mode linum-on)
 
-(defun linum-on ()
+(defun linum-on (&optional frame)
   (unless (or (minibufferp)
               ;; Turning linum-mode in the daemon's initial frame
               ;; could significantly slow down startup, if the buffer
@@ -149,12 +149,21 @@ Linum mode is a buffer-local minor mode."
               ;; desktop was saved.  So we disable linum-mode for
               ;; non-client frames in a daemon session.
 
-              ;; Note that nowadays, this actually doesn't show line
-              ;; numbers in client frames at all, because we visit the
-              ;; file before creating the client frame.  See bug#35726.
-              ;; Use `frame-initial-p'?
-              (and (daemonp) (eq (selected-frame) terminal-frame)))
+              ;; Buffers skipped during daemon startup are reconsidered
+              ;; when a client frame displays them below.
+              (and (daemonp)
+                   (eq (or frame (selected-frame)) terminal-frame)))
     (linum-mode 1)))
+
+(defun linum--global-mode-on-window-buffer-change (window)
+  "Turn on Linum in a newly displayed buffer when global mode is active."
+  (when (and global-linum-mode (window-live-p window))
+    (with-current-buffer (window-buffer window)
+      (unless linum-mode
+        (linum-on (window-frame window))))))
+
+(add-hook 'window-buffer-change-functions
+          #'linum--global-mode-on-window-buffer-change)
 
 (defun linum-delete-overlays ()
   "Delete all overlays displaying line numbers for this buffer."

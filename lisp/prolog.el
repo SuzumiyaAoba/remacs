@@ -409,8 +409,18 @@ Legal values:
       "ensure_loaded" "foreign" "include" "initialization" "multifile" "op"
       "public" "set_prolog_flag"))
     (t
-     ;; FIXME: Shouldn't we just use the union of all the above here?
-     ("dynamic" "module")))
+     ;; With no dialect selected, recognize directives from every known
+     ;; system so common source remains highlighted in a generic buffer.
+     ("all" "begin_module" "block" "built_in" "char_conversion" "compile"
+      "dbgcomp" "discontiguous" "dynamic" "else" "end_module"
+      "ensure_linked" "ensure_loaded" "equality" "export" "export_list"
+      "external" "fail" "foreign" "func" "if" "import" "import_module"
+      "include" "include_module" "initialization" "inst" "instance"
+      "interface" "meta_predicate" "mode" "module" "module_interface"
+      "module_transparent" "multifile" "nodbgcomp" "not" "op" "parallel"
+      "pred" "pragma" "public" "require" "sequential" "set_prolog_flag"
+      "some" "then" "true" "type" "typeclass" "use_module" "volatile"
+      "where")))
   "Alist of Prolog keywords which is used for font locking of directives."
   :version "24.1"
   :group 'prolog-font-lock

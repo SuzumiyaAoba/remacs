@@ -2562,9 +2562,7 @@ password prompting should occur.")
 (defun comint-send-invisible (&optional prompt)
   "Read a string without echoing.
 Then send it to the process running in the current buffer.
-The string is sent using `comint-input-sender'.
-Security bug: your string can still be temporarily recovered with
-\\[view-lossage]; `clear-this-command-keys' can fix that."
+The string is sent using `comint-input-sender'."
   (interactive "P" comint-mode)			; Defeat snooping via C-x ESC ESC
   (let ((proc (get-buffer-process (current-buffer)))
 	(prefix
@@ -2580,6 +2578,7 @@ Security bug: your string can still be temporarily recovered with
 	    (setq str (funcall comint-password-function prefix-prompt)))
 	  (unless str
 	    (setq str (read-passwd prefix-prompt)))
+          (clear-this-command-keys)
 	  (if (stringp str)
 	      (progn
 		(comint-snapshot-last-prompt)

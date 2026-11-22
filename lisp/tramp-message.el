@@ -411,8 +411,14 @@ FMT-STRING and ARGUMENTS."
 	    (apply #'format-message fmt-string arguments))))
     ;; FIXME: This doesn't look right: ELisp code should be able to rely on
     ;; the "shape" of the list based on the type of the signal.
-    (signal signal (list (substring-no-properties
-			  (apply #'format-message fmt-string arguments))))))
+    (let ((message-text
+           (substring-no-properties
+            (apply #'format-message fmt-string arguments))))
+      ;; file-error conditions carry details after their message string.
+      (signal signal
+              (if (memq 'file-error (get signal 'error-conditions))
+                  (cons message-text arguments)
+                (list message-text)))))
 
 (defvar tramp-error-show-message-timeout 30
   "Time to show the Tramp buffer in case of an error.

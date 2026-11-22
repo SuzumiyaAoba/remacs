@@ -315,11 +315,15 @@ fn map_keymap_impl(i: &mut Interp, args: &[Value], own_only: bool) -> EvalResult
     } else {
         crate::editor::keymap_all_bindings(i, &v)
     };
+    let keys: Vec<Value> = pairs.into_iter().map(|(key, _)| key).collect();
     let keymap_tag = i.q_soft("keymap");
-    for (k, def) in pairs {
+    for k in keys {
         if matches!(&k, Value::Sym(s) if Some(*s) == keymap_tag) {
             continue;
         }
+        let Some(def) = crate::editor::keymap_binding_for_map(i, &v, &k, own_only)? else {
+            continue;
+        };
         let fnv = args[0].clone();
         i.apply(&fnv, vec![k, def])?;
     }

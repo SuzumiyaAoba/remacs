@@ -2617,7 +2617,7 @@ gud, see `gud-mode'."
   (gud-def gud-cont   "cont"          "\C-r" "Continue with display.")
   (gud-def gud-finish "step up"       "\C-f" "Continue until current method returns.")
   (gud-def gud-up     "up\C-Mwhere"   "<"    "Up one stack frame.")
-  (gud-def gud-down   "down\C-Mwhere" ">"    "Up one stack frame.")
+  (gud-def gud-down   "down\C-Mwhere" ">"    "Down one stack frame.")
   (gud-def gud-run    "run"           nil    "Run the program.") ;if VM start using jdb
   (gud-def gud-print  "print %e"  "\C-p" "Print value of expression at point.")
   (gud-def gud-pstar  "dump %e"  nil "Print all object information at point.")

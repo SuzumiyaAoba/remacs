@@ -3564,6 +3564,9 @@ Return a list of lists of the form:
             (nreverse res))))
     aligners))
 
+(defconst markdown-ts--table-empty-cell-placeholder "<!-- -->"
+  "Invisible Markdown comment used to keep empty table rows parseable.")
+
 (defun markdown-ts--table-make-aligner (width align)
   "Make a Markdown column aligner.
 WIDTH is the column width.
@@ -3583,24 +3586,26 @@ ALIGN is one of `left' `center' `right' `unspecified'."
 Truncate TEXT wider than WIDTH.  It is the caller's responsibility to
 ensure text will fit.
 ALIGN is one of `left' `center' `right' `unspecified'."
-  (let* ((strlen (length text))
-         (strlen0 (min width strlen))
-         (text0 (substring text 0 strlen0))
-         (pad (- width strlen0)))
+  (let* ((text0
+          (if (> (string-width text) width)
+              (let ((end 0) done)
+                (while (and (< end (length text)) (not done))
+                  (if (> (string-width (substring text 0 (1+ end))) width)
+                      (setq done t)
+                    (setq end (1+ end))))
+                (substring text 0 end))
+            text))
+         (pad (- width (string-width text0)))
+         (left-pad (if (eq align 'center) (/ pad 2) pad))
+         (right-pad (- pad left-pad)))
     (pcase align
       ('center
-       (let* ((half-pad (make-string (floor (/ pad 2)) ?\s))
-              (s (concat
-                  half-pad
-                  text0
-                  half-pad)))
-         (string-pad
-          (substring s 0 (min (length s) width))
-          width)))
+       (concat (make-string left-pad ?\s)
+               text0
+               (make-string right-pad ?\s)))
       ('right
-       (string-pad text width nil 'start))
-      (_
-       (string-pad text width)))))
+       (concat (make-string left-pad ?\s) text0))
+      (_ (concat text0 (make-string pad ?\s))))))
 
 ;;;; Commands:
 
@@ -3631,7 +3636,7 @@ If the line preceding `point' is not blank, insert one.
 
 Note: Due to an issue with the tree-sitter Markdown grammar, a row of
 empty cells causes a parsing error.  To avoid this, an empty row will
-contain a single period in its first cell."
+contain an HTML comment in its first cell.  Markdown renderers hide it."
   (interactive)
   (setq nrows (or nrows 3))
   (setq ncols (or ncols (and headings (length headings)) 3))
@@ -3647,9 +3652,18 @@ contain a single period in its first cell."
            (dolist (elt headings)
              (let ((str (if (consp elt) (car elt) elt)))
                (push (max markdown-ts-table-default-column-width
-                          (length str))
+                          (string-width str))
                      res)))
            (nreverse res))))
+    (when (and (consp heading-widths)
+               (catch 'empty-first-cell
+                 (dotimes (y nrows)
+                   (let ((cell (nth 0 (nth y body))))
+                     (when (or (null cell) (equal cell ""))
+                       (throw 'empty-first-cell t)))))
+      (setcar heading-widths
+              (max (car heading-widths)
+                   (string-width markdown-ts--table-empty-cell-placeholder))))
     ;; If point is not at bol, insert a newline.
     (unless (eq (point) (pos-bol))
       (insert "\n"))
@@ -3664,7 +3678,7 @@ contain a single period in its first cell."
       (let* ((elt (nth x headings))
              (str (if (consp elt) (car elt) elt))
              (width (max 3 (nth x heading-widths)))
-             (pad-width (- width (length str))))
+             (pad-width (- width (string-width str))))
         (insert str (make-string pad-width ?\s) "|")))
     (insert "\n")
     ;; Insert padded heading aligners.
@@ -3681,10 +3695,11 @@ contain a single period in its first cell."
       (insert "|")
       (let ((row (nth y body)))
         (dotimes (x ncols)
-          ;; TODO: Remove the placeholder character if the tree-sitter
-          ;; grammar is repaired.
-          (let* ((str (or (nth x row) (and (eq x 0) ".") ""))
-                 (strlen (length str))
+          (let* ((cell (nth x row))
+                 (str (if (and (eq x 0) (or (null cell) (equal cell "")))
+                          markdown-ts--table-empty-cell-placeholder
+                        (or cell "")))
+                 (strlen (string-width str))
                  (width (nth x heading-widths))
                  (pad-width (max 0 (- width strlen))))
             (insert str
@@ -3861,7 +3876,7 @@ If point is not at a table, do nothing."
               (heading-widths
                (let (res)
                  (dolist (elt (treesit-node-children delimiter-row 'named))
-                   (push (length (treesit-node-text elt)) res))
+                 (push (string-width (treesit-node-text elt)) res))
                  (nreverse res))))
     (let* ((near (markdown-ts--table-body-row-near-pos pos))
            (row (car near))
@@ -3889,11 +3904,14 @@ If point is not at a table, do nothing."
                (insert "|")
                (dotimes (x ncols)
                  (let ((pad-width (nth x heading-widths)))
-                   ;; TODO: Remove the placeholder character if the
-                   ;; tree-sitter grammar is repaired.
-                   (insert (if (eq x 0) "." "")
-                           (make-string (- pad-width (if (eq x 0) 1 0)) ?\s)
-                           "|")))))
+                   (let ((cell (if (eq x 0)
+                                   markdown-ts--table-empty-cell-placeholder
+                                 "")))
+                     (insert cell
+                             (make-string
+                              (max 0 (- pad-width (string-width cell)))
+                              ?\s)
+                             "|"))))))
         (when above
           (insert "\n")))
       (cond (above
@@ -4055,11 +4073,17 @@ If point is not at a table, do nothing."
       ;; symbol yet inconsistently continues until just before the
       ;; trailing pipe.
       (let* ((adj 0) ; Adjust node position offsets by inserted text.
-             (width markdown-ts-table-default-column-width)
+             (width (max markdown-ts-table-default-column-width
+                         (string-width
+                          markdown-ts--table-empty-cell-placeholder)))
              (empty (make-string width ?\s))
-             ;; TODO: Remove the placeholder character if the tree-sitter
-             ;; grammar is repaired.
-             (placeholder (concat "." (make-string (1- width) ?\s)))
+             (placeholder
+              (concat markdown-ts--table-empty-cell-placeholder
+                      (make-string
+                       (max 0 (- width
+                                 (string-width
+                                  markdown-ts--table-empty-cell-placeholder)))
+                       ?\s)))
              (delim (make-string width ?-))
              (rows (treesit-node-children table 'named))
              (nrows (length rows))
@@ -4472,7 +4496,7 @@ If point is not at a table, do nothing."
                   (beg (plist-get aligner :beg))
                   (end (plist-get aligner :end))
                   (str (buffer-substring-no-properties beg end))
-                  (strlen (max 5 (length str))))
+                  (strlen (max 5 (string-width str))))
         (delete-region beg end)
         (save-excursion
           (goto-char beg)
@@ -4519,7 +4543,7 @@ If not in a table, do nothing."
             (when-let* ((cell (nth y cells))
                         (text (string-trim-right
                                (treesit-node-text cell 'no-property)))
-                        (w (length text))
+                        (w (string-width text))
                         (w0 (or (gethash y col-widths) 0)))
               ;; Elide delimiter widths.
               (unless (eq x 1)

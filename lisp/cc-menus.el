@@ -176,12 +176,12 @@ A sample value might look like: `\\(_P\\|_PROTO\\)'.")
 nested angle brackets constructs."
   (if (> depth 0)
       (concat "<"
-		"[][.," c-alnum "_? \t\n\r]+"
+        "[][.,@" c-alnum "_? \t\n\r]+"
 		(if (> depth 1)
 		    "\\(?:")
 		(cc-imenu-java-build-type-args-regex (1- depth))
 		(if (> depth 1)
-		  (concat "[][.," c-alnum "_? \t\n\r]*"
+		  (concat "[][.,@" c-alnum "_? \t\n\r]*"
 			  "\\)*"))
 	      ">")))
 
@@ -285,8 +285,40 @@ nested angle brackets constructs."
 	"\\)?"
 	")"
 	"[.,_" c-alnum " \t\n\r]*"	      ; throws etc.
-	"{"
-	)) 5))
+	"{" 
+	)) 5)
+    ;; A constructor has no return type, so it cannot match the method
+    ;; expression above.  Require a body opener to avoid indexing calls.
+    (nil
+     ,(concat
+       "^[ \t]*"
+       "\\(?:\\(?:public\\|protected\\|private\\)[ \t\n\r]+\\)?"
+       "\\(?:@[_" c-alpha "][._$" c-alnum "]*\\(?:[ \t\n\r]*(\\(?:[^)]*\\))\\)?[ \t\n\r]+\\)*"
+       "\\([_$" c-alpha "][" c-alnum "_$]*\\)"
+       "[ \t\n\r]*"
+       "("
+       "[ \t\n\r]*"
+       "\\(?:"
+       "\\(?:" cc-imenu-java-method-arg-regexp ",[ \t\n\r]*\\)*"
+       cc-imenu-java-method-arg-regexp
+       "\\)?"
+       ")"
+       "[ \t\n\r]*"
+       "\\(?:throws\\_>[^{]+\\)?"
+       "[ \t\n\r]*"
+       "{")
+     1)
+    ;; Index Java type declarations in addition to methods and constructors.
+    (nil
+     ,(concat
+       "^[ \t]*"
+       "\\(?:\\(?:public\\|protected\\|private\\|abstract\\|static\\|final\\|strictfp\\|sealed\\|non-sealed\\)[ \t\n\r]+\\)*"
+       "\\(?:@interface\\|class\\|interface\\|enum\\|record\\)[ \t\n\r]+"
+       "\\([_$" c-alpha "][" c-alnum "_$]*\\)"
+       "\\(?:[ \t\n\r]*<[^>{}]*>\\)?"
+       "[^{};]*"
+       "{" )
+     1))
   "Imenu generic expression for Java mode.  See `imenu-generic-expression'.")
 
 

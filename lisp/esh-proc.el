@@ -354,13 +354,10 @@ Used only on systems which do not support async subprocesses.")
                                                      'unix))))
     (cond
      (eshell-supports-asynchronous-processes
-      (unless (or ;; FIXME: It's not currently possible to use a
-                  ;; stderr process for remote files.
-                  (file-remote-p default-directory)
-                  (equal (car (aref eshell-current-handles
-                                    eshell-output-handle))
-                         (car (aref eshell-current-handles
-                                    eshell-error-handle))))
+      (unless (equal (car (aref eshell-current-handles
+                                eshell-output-handle))
+                     (car (aref eshell-current-handles
+                                eshell-error-handle)))
         (eshell-protect-handles eshell-current-handles)
         (setq stderr-proc
               (make-pipe-process
@@ -430,51 +427,77 @@ Used only on systems which do not support async subprocesses.")
       ;; No async subprocesses...
       (let ((oldbuf (current-buffer))
 	    (interact-p (eshell-interactive-output-p))
-	    lbeg lend line proc-buf exit-status)
+	    lbeg lend line proc-buf exit-status
+	    (separate-stderr
+	     (not (equal (car (aref eshell-current-handles eshell-output-handle))
+			 (car (aref eshell-current-handles eshell-error-handle)))))
+	    stderr-file stderr-buffer)
 	(and (not (markerp eshell-last-sync-output-start))
 	     (setq eshell-last-sync-output-start (point-marker)))
 	(setq proc-buf
 	      (set-buffer (get-buffer-create eshell-scratch-buffer)))
 	(erase-buffer)
 	(set-buffer oldbuf)
-	(run-hook-with-args 'eshell-exec-hook command)
-        ;; XXX: This doesn't support sending stdout and stderr to
-        ;; separate places.
-	(setq exit-status
-	      (apply #'call-process-region
-		     (append (list eshell-last-sync-output-start (point)
-				   command t
-				   eshell-scratch-buffer nil)
-			     args)))
+	(unwind-protect
+	    (progn
+	      (when separate-stderr
+		(setq stderr-file (make-temp-file "eshell-stderr-")
+		      stderr-buffer (generate-new-buffer " *eshell stderr*")))
+	      (run-hook-with-args 'eshell-exec-hook command)
+	      (setq exit-status
+		    (apply #'call-process-region
+			   (append (list eshell-last-sync-output-start (point)
+					 command t
+					 (if stderr-file
+					     (list eshell-scratch-buffer stderr-file)
+					   eshell-scratch-buffer)
+					 nil)
+			   args)))
 	;; When in a pipeline, record the place where the output of
 	;; this process will begin.
-	(and (bound-and-true-p eshell-in-pipeline-p)
-	     (set-marker eshell-last-sync-output-start (point)))
+	      (and (bound-and-true-p eshell-in-pipeline-p)
+		   (set-marker eshell-last-sync-output-start (point)))
 	;; Simulate the effect of the process filter.
-	(when (numberp exit-status)
-	  (set-buffer proc-buf)
-	  (goto-char (point-min))
-	  (setq lbeg (point))
-	  (while (eq 0 (forward-line 1))
-	    (setq lend (point)
-		  line (buffer-substring-no-properties lbeg lend))
-	    (set-buffer oldbuf)
-	    (if interact-p
-		(eshell-interactive-process-filter nil line)
-	      (eshell-output-object line))
-	    (setq lbeg lend)
-	    (set-buffer proc-buf))
-	  (set-buffer oldbuf))
+	      (when (numberp exit-status)
+		(set-buffer proc-buf)
+		(goto-char (point-min))
+		(setq lbeg (point))
+		(while (eq 0 (forward-line 1))
+		  (setq lend (point)
+			line (buffer-substring-no-properties lbeg lend))
+		  (set-buffer oldbuf)
+		  (if interact-p
+		      (eshell-interactive-process-filter nil line)
+		    (eshell-output-object line))
+		  (setq lbeg lend)
+		  (set-buffer proc-buf))
+		(set-buffer oldbuf)
+		(when stderr-buffer
+		  (with-current-buffer stderr-buffer
+		    (insert-file-contents stderr-file)
+		    (goto-char (point-min))
+		    (setq lbeg (point))
+		    (while (eq 0 (forward-line 1))
+		      (setq lend (point)
+			    line (buffer-substring-no-properties lbeg lend))
+		      (set-buffer oldbuf)
+		      (eshell-output-object line eshell-error-handle)
+		      (setq lbeg lend)
+		      (set-buffer stderr-buffer)))))
         ;; Simulate the effect of `eshell-sentinel'.
-        (eshell-set-exit-info
-         (if (numberp exit-status) exit-status -1)
-         (and (numberp exit-status) (= exit-status 0)))
+	      (eshell-set-exit-info
+	       (if (numberp exit-status) exit-status -1)
+	       (and (numberp exit-status) (= exit-status 0)))
 	(run-hook-with-args 'eshell-kill-hook command exit-status)
 	(or (bound-and-true-p eshell-in-pipeline-p)
 	    (setq eshell-last-sync-output-start nil))
 	(if (not (numberp exit-status))
 	  (error "%s: external command failed: %s" command exit-status))
-	(setq proc t))))
+	(setq proc t))
+	  (when (buffer-live-p stderr-buffer)
+	    (kill-buffer stderr-buffer))
+	  (when (and stderr-file (file-exists-p stderr-file))
+    (delete-file stderr-file))))))
     proc))
 
 (defun eshell-interactive-process-filter (process string)

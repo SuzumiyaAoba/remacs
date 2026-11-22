@@ -52,7 +52,7 @@ use async_task::Runnable;
 use futures::channel::oneshot;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawWindowHandle};
 use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
@@ -577,6 +577,11 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Lower the window without requesting input focus.
     /// Platforms without a non-focusing lowering operation leave its order unchanged.
     fn lower_without_focus(&self) {}
+    /// Place this window immediately above or below SIBLING without changing
+    /// keyboard focus. Platforms without relative stacking return an error.
+    fn restack_relative_to(&self, _sibling: RawWindowHandle, _above: bool) -> Result<()> {
+        Err(anyhow::anyhow!("relative window restacking is unavailable"))
+    }
     /// Set whether the window belongs to the always-on-top group.
     /// Platforms without persistent stacking control leave the group unchanged.
     fn set_always_on_top(&self, _always_on_top: bool) {}

@@ -148,6 +148,38 @@ VALUE and TYPE are string output from an ocaml process."
     (org-babel-ocaml-read-array value))
    (t (message "don't recognize type %s" type) value)))
 
+(defun org-babel-ocaml--replace-separator (text separator)
+  "Replace SEPARATOR outside OCaml strings and comments in TEXT."
+  (with-temp-buffer
+    (insert text)
+    (let ((comment-depth 0)
+          (in-string nil)
+          escaped)
+      (goto-char (point-min))
+      (while (< (point) (point-max))
+        (cond
+         (in-string
+          (cond
+           (escaped (setq escaped nil))
+           ((eq (char-after) ?\\) (setq escaped t))
+           ((eq (char-after) ?\") (setq in-string nil)))
+          (forward-char))
+         ((> comment-depth 0)
+          (cond ((looking-at "(\\*")
+                 (setq comment-depth (1+ comment-depth))
+                 (forward-char 2))
+                ((looking-at "\\*)")
+                 (setq comment-depth (1- comment-depth))
+                 (forward-char 2))
+                (t (forward-char))))
+         ((looking-at "(\\*")
+          (setq comment-depth 1)
+          (forward-char 2))
+         ((eq (char-after) ?\") (setq in-string t) (forward-char))
+         ((looking-at separator) (replace-match "," t t))
+         (t (forward-char))))
+      (buffer-string))))
+
 (defun org-babel-ocaml-read-list (results)
   "Convert RESULTS into an elisp table or string.
 If the results look like a table, then convert them into an
@@ -156,7 +188,8 @@ Emacs-lisp table, otherwise return the results as a string."
   ;; is in a string in a list.  The same comment applies to
   ;; `org-babel-ocaml-read-array' below (with even more failure
   ;; modes).
-  (org-babel-script-escape (replace-regexp-in-string ";" "," results)))
+  (org-babel-script-escape
+   (org-babel-ocaml--replace-separator results ";")))
 
 (defun org-babel-ocaml-read-array (results)
   "Convert RESULTS into an elisp table or string.
@@ -165,8 +198,8 @@ Emacs-lisp table, otherwise return the results as a string."
   (org-babel-script-escape
    (replace-regexp-in-string
     "\\[|" "[" (replace-regexp-in-string
-		"|\\]" "]" (replace-regexp-in-string
-			    "; " "," results)))))
+		"|\\]" "]" (org-babel-ocaml--replace-separator
+                             results "; ")))))
 
 (provide 'ob-ocaml)
 

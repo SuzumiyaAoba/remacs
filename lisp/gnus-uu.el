@@ -1872,7 +1872,7 @@ Gnus might fail to display all of it.")
       (condition-case err
           (delete-directory dir)
         (error (gnus-message 3 "Deleting directory %s failed... %s" file err))))
-    (gnus-message 7 "")))
+    (gnus-message 7 ""))))
 
 ;; Initializing
 

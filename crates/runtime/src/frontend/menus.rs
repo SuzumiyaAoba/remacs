@@ -509,7 +509,7 @@ fn modifier_bar_toolbar_command(i: &Interp, definition: &Value) -> Option<Value>
         .strip_prefix("event-apply-")?
         .strip_suffix("-modifier")?;
     let wrapper_name = format!("tool-bar-event-apply-{modifier}-modifier");
-    let wrapper = i.intern_soft(&wrapper_name)?;
+    let wrapper = i.q_soft(&wrapper_name)?;
     i.fbound_p(wrapper).then_some(Value::Sym(wrapper))
 }
 

@@ -376,6 +376,18 @@ VALUE does not satisfy (any type in) TYPE."
                       value)))))
    (t (signal 'wrong-type-argument (list '(or symbolp listp) type)))))
 
+(defun icalendar--set-original-name (node name)
+  "Set the original iCalendar name of NODE to NAME and return NODE.
+NAME must be a nonempty token containing only ASCII letters, digits,
+and hyphens.  This keeps constructed names safe to print."
+  (unless (stringp name)
+    (signal 'wrong-type-argument (list 'stringp name)))
+  (unless (and (length> name 0)
+               (not (string-match-p "[^A-Za-z0-9-]" name)))
+    (error "Invalid iCalendar name: %s" name))
+  (icalendar-ast-node-meta-set node :original-name name)
+  node)
+
 (defun icalendar--make-param--list (type value-type raw-values)
   "Make a param node of TYPE with list of values RAW-VALUES of type VALUE-TYPE."
   (let ((value (if (seq-every-p #'icalendar-ast-node-p raw-values)
@@ -401,11 +413,15 @@ VALUE does not satisfy (any type in) TYPE."
         type
         (list :value value))))))
 
-(defmacro icalendar-make-param (type value)
+(defmacro icalendar-make-param (type &rest arguments)
   "Construct an iCalendar parameter node of TYPE with value VALUE.
 
 TYPE should be an iCalendar type symbol satisfying
 `icalendar-param-type-symbol-p'; it should not be quoted.
+
+For icalendar-otherparam, pass the original parameter name before VALUE:
+
+  (icalendar-make-param icalendar-otherparam \"X-FOO\" (list \"bar\"))
 
 VALUE should evaluate to a value appropriate for TYPE.  In particular, if
 TYPE expects a list of values (see `icalendar-expects-list-p'), VALUE
@@ -422,14 +438,28 @@ will return an `icalendar-deltoparam' node whose value is a list of
 
 The resulting syntax node is checked for validity by
 `icalendar-ast-node-valid-p' before it is returned."
-  (declare (debug (symbolp form)))
-  ;; TODO: support `icalendar-otherparam'
+  (declare (debug (symbolp &rest form)))
   (unless (icalendar-param-type-symbol-p type)
     (error "Not an iCalendar param type: %s" type))
-  (let ((value-type (or (get type 'icalendar-value-type) 'plain-text)))
-    (if (icalendar-expects-list-of-values-p type)
-        `(icalendar--make-param--list ',type ',value-type ,value)
-      `(icalendar--make-param--nonlist ',type ',value-type ,value))))
+  (let* ((other-p (eq type 'icalendar-otherparam))
+         (expected-arguments (if other-p 2 1)))
+    (unless (= (length arguments) expected-arguments)
+      (if other-p
+          (error "Unknown parameter construction requires NAME and VALUE")
+        (error "Expected one VALUE argument for parameter %s" type)))
+    (let* ((name (and other-p (car arguments)))
+           (value (if other-p (cadr arguments) (car arguments)))
+           (value-type (or (get type 'icalendar-value-type) 'plain-text))
+           (construction
+            (if (icalendar-expects-list-of-values-p type)
+                `(icalendar--make-param--list ',type ',value-type ,value)
+              `(icalendar--make-param--nonlist ',type ',value-type ,value))))
+      (if other-p
+          `(let ((node ,construction))
+             (when node
+               (icalendar--set-original-name node ,name))
+             node)
+        construction))))
 
 (defun icalendar--make-property--list (type value-types raw-values &optional params)
   "Make a property node of TYPE with list of values RAW-VALUES.
@@ -469,6 +499,10 @@ PARAMS, if given, should be a list of parameter nodes."
 TYPE should be an iCalendar type symbol satisfying
 `icalendar-property-type-symbol-p'; it should not be quoted.
 
+For icalendar-other-property, pass the original property name before VALUE:
+
+  (icalendar-make-property icalendar-other-property \"X-FOO\" \"bar\")
+
 VALUE should evaluate to a value appropriate for TYPE.  In particular,
 if TYPE expects a list of values (see
 `icalendar-expects-list-of-values-p'), VALUE should be such a list.  If
@@ -494,15 +528,20 @@ will return an `icalendar-rdate' node whose value is a list of
 
 The resulting syntax node is checked for validity by
 `icalendar-ast-node-valid-p' before it is returned."
-  ;; TODO: support `icalendar-other-property', maybe like
-  ;; (icalendar-other-property "X-NAME" value ...)
   (declare (debug (symbolp form &rest form))
            (indent 2))
   (unless (icalendar-property-type-symbol-p type)
     (error "Not an iCalendar property type: %s" type))
-  (let ((value-types (cons (get type 'icalendar-default-type)
-                           (get type 'icalendar-other-types)))
-        params-expr children lists-of-children)
+  (let* ((other-p (eq type 'icalendar-other-property))
+         (name (and other-p value))
+         (arguments param-templates))
+    (when (and other-p (null arguments))
+      (error "Unknown property construction requires NAME and VALUE"))
+    (let* ((property-value (if other-p (car arguments) value))
+           (param-templates (if other-p (cdr arguments) arguments))
+           (value-types (cons (get type 'icalendar-default-type)
+                              (get type 'icalendar-other-types)))
+           params-expr children lists-of-children)
     (dolist (c param-templates)
       (cond ((and (listp c) (icalendar-type-symbol-p (car c)))
              ;; c is a template for a child node, so it should be
@@ -518,13 +557,22 @@ The resulting syntax node is checked for validity by
              ;; evaluate to syntax nodes:
              (push c children))))
     (when (or children lists-of-children)
-      (setq params-expr
-            `(seq-filter #'identity
-                         (append (list ,@children) ,@lists-of-children))))
+        (setq params-expr
+              `(seq-filter #'identity
+                           (append (list ,@children) ,@lists-of-children))))
 
-    (if (icalendar-expects-list-of-values-p type)
-        `(icalendar--make-property--list ',type ',value-types ,value ,params-expr)
-      `(icalendar--make-property--nonlist ',type ',value-types ,value ,params-expr))))
+      (let ((construction
+             (if (icalendar-expects-list-of-values-p type)
+                 `(icalendar--make-property--list ',type ',value-types
+                                                  ,property-value ,params-expr)
+               `(icalendar--make-property--nonlist ',type ',value-types
+                                                    ,property-value ,params-expr))))
+        (if other-p
+            `(let ((node ,construction))
+               (when node
+                 (icalendar--set-original-name node ,name))
+               node)
+          construction)))))
 
 (defmacro icalendar-make-component (type &rest templates)
   "Construct an iCalendar component node of TYPE from TEMPLATES.
@@ -547,6 +595,11 @@ TEMPLATES.  Likewise, if TYPE is `icalendar-vcalendar', the properties
 `icalendar-prodid', `icalendar-version', and `icalendar-calscale' will
 be automatically provided if absent.
 
+For an unknown component, pass its original name before child templates:
+
+  (icalendar-make-component icalendar-other-component \"X-FOO\"
+     (icalendar-summary \"bar\"))
+
 For example,
 
   (icalendar-make-component icalendar-vevent
@@ -562,10 +615,16 @@ The resulting syntax node is checked for validity by
 `icalendar-ast-node-valid-p' before it is returned."
   (declare (debug (symbolp &rest form))
            (indent 1))
-  ;; TODO: support `icalendar-other-component', maybe like
-  ;; (icalendar-other-component (:x-name "X-NAME") templates ...)
   (unless (icalendar-component-type-symbol-p type)
     (error "Not an iCalendar component type: %s" type))
+  (let* ((other-p (eq type 'icalendar-other-component))
+         (arguments templates)
+         (name (and other-p (car arguments)))
+         (templates (if other-p (cdr arguments) arguments)))
+    (when (and other-p (null arguments))
+      (error "Unknown component construction requires NAME"))
+    (when (and other-p (null templates))
+      (error "Unknown component construction requires at least one child"))
   ;; Add templates for required properties automatically if we can:
   (when (memq type '(icalendar-vevent icalendar-vtodo icalendar-vjournal icalendar-vfreebusy))
     (unless (assq 'icalendar-dtstamp templates)
@@ -610,12 +669,17 @@ The resulting syntax node is checked for validity by
     (setq children (nreverse children)
           lists-of-children (nreverse lists-of-children))
     (when (or children lists-of-children)
-      `(icalendar-ast-node-valid-p
-        (icalendar-make-ast-node
-         (quote ,type)
-         nil
-         (seq-filter #'identity
-                     (append (list ,@children) ,@lists-of-children)))))))
+      (let ((construction
+             `(icalendar-ast-node-valid-p
+               (icalendar-make-ast-node
+                (quote ,type)
+                nil
+                (seq-filter #'identity
+                            (append (list ,@children) ,@lists-of-children))))))
+        (if other-p
+            `(let ((node ,construction))
+               (icalendar--set-original-name node ,name))
+          construction))))))
 
 ;; TODO: allow disabling the validity check??
 (defmacro icalendar-make-node-from-templates (type &rest templates)
@@ -654,6 +718,13 @@ If TYPE is an iCalendar component or property type, a TEMPLATE can also
 have the form (@ L), where L evaluates to a list of child nodes to be
 added to the component or property node.
 
+For an unknown parameter, property, or component, include its original
+name before its value or child templates:
+
+  (icalendar-otherparam \"X-FOO\" (list \"bar\"))
+  (icalendar-other-property \"X-FOO\" \"bar\")
+  (icalendar-other-component \"X-FOO\" (icalendar-summary \"bar\"))
+
 For example, an iCalendar VEVENT could be written like this:
 
   (icalendar-make-node-from-templates icalendar-vevent
@@ -680,10 +751,20 @@ Before the constructed node is returned, it is validated by
    ((icalendar-value-type-symbol-p type)
     `(icalendar-ast-node-valid-p
       (icalendar-make-value-node-of (quote ,type) ,(car templates))))
+   ((eq type 'icalendar-otherparam)
+    `(icalendar-make-param icalendar-otherparam
+                              ,(car templates) ,(cadr templates)))
    ((icalendar-param-type-symbol-p type)
     `(icalendar-make-param ,type ,(car templates)))
+   ((eq type 'icalendar-other-property)
+    `(icalendar-make-property icalendar-other-property
+                                 ,(car templates) ,(cadr templates)
+                                 ,@(cddr templates)))
    ((icalendar-property-type-symbol-p type)
     `(icalendar-make-property ,type ,(car templates) ,@(cdr templates)))
+   ((eq type 'icalendar-other-component)
+    `(icalendar-make-component icalendar-other-component
+                                  ,@templates))
    ((icalendar-component-type-symbol-p type)
     `(icalendar-make-component ,type ,@templates))))
 

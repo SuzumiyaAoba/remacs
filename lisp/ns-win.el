@@ -796,8 +796,19 @@ See the documentation of `create-fontset-from-fontset-spec' for the format.")
 (defvar ns-initialized nil
   "Non-nil if Nextstep windowing has been initialized.")
 
+(defun ns-auto-hide-menu-bar--watcher (_symbol value operation _where)
+  "Apply VALUE of the auto-hide menu-bar setting when it changes."
+  (when (and ns-initialized
+             (memq operation '(set set-default let unlet))
+             (fboundp 'ns-set-auto-hide-menu-bar))
+    (ns-set-auto-hide-menu-bar value)))
+
+(add-variable-watcher 'ns-auto-hide-menu-bar
+                      #'ns-auto-hide-menu-bar--watcher)
+
 (declare-function x-handle-args "common-win" (args))
 (declare-function ns-list-services "nsfns.m" ())
+(declare-function ns-set-auto-hide-menu-bar "nsgui" (value))
 (declare-function x-open-connection "nsfns.m"
                   (display &optional xrm-string must-succeed))
 (declare-function ns-set-resource "nsfns.m" (owner name value))
@@ -823,6 +834,7 @@ See the documentation of `create-fontset-from-fontset-spec' for the format.")
             :error)))
 
   (x-open-connection (or (system-name) "") x-command-line-resources t)
+  (ns-set-auto-hide-menu-bar ns-auto-hide-menu-bar)
 
   ;; Add GNUstep menu items Services, Hide and Quit.  Rename Help to Info
   ;; and put it first (i.e. omit from menu-bar-final-items.

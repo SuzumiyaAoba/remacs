@@ -7497,11 +7497,11 @@ Only works for Bourne-like shells."
 ;;; Signal handling.  This works for remote processes, which have set
 ;;; the process property `remote-pid'.
 
-(defun tramp-interrupt-process (&optional process _current-group)
+(defun tramp-interrupt-process (&optional process current-group)
   "Interrupt remote PROCESS.
 PROCESS can be a process, a buffer with an associated process, the
-name of a process or buffer, or nil to default to the current buffer."
-  ;; CURRENT-GROUP is not implemented yet.
+name of a process or buffer, or nil to default to the current buffer.
+If CURRENT-GROUP is non-nil, interrupt the remote process group."
   (let ((proc (cond
 	       ((processp process) process)
 	       ((bufferp process)  (get-buffer-process process))
@@ -7520,10 +7520,13 @@ name of a process or buffer, or nil to default to the current buffer."
 	;; negative pid, so we try both variants.
 	(tramp-compat-funcall 'tramp-send-command
 	  (process-get proc 'tramp-vector)
-	  (format "(\\kill -2 -%d || \\kill -2 %d) 2>%s"
-                  pid pid
-                  (tramp-get-remote-null-device
-		   (process-get proc 'tramp-vector))))
+	  (let ((null-device
+		 (tramp-get-remote-null-device
+		  (process-get proc 'tramp-vector))))
+	    (if current-group
+		(format "(\\kill -2 -%d || \\kill -2 %d) 2>%s"
+			pid pid null-device)
+	      (format "\\kill -2 %d 2>%s" pid null-device))))
 	;; Wait, until the process has disappeared.  If it doesn't,
 	;; fall back to the default implementation.
         (while (tramp-accept-process-output proc))

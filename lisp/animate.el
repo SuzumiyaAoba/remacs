@@ -61,8 +61,9 @@
 			;; on the specified line.
 			vpos
 			;; The Ith character in the string
-			;; needs to end up I positions later.
-			(+ hpos i))
+			 ;; needs to end up after the display width of its
+			 ;; predecessors.
+			(+ hpos (string-width (substring string 0 i))))
 		  characters)))
     characters))
 
@@ -122,7 +123,7 @@ in the current window."
 			     (or hpos
 				 ;; HPOS unspecified, so compute
 				 ;; it so as to center the string.
-				 (max 0 (/ (- (window-width) (length string)) 2)))))
+				 (max 0 (/ (- (window-width) (string-width string)) 2)))))
 	(show-trailing-whitespace nil)
 	;; Make sure indentation does not use tabs.
 	;; They would confuse things.

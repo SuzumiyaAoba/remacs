@@ -122,6 +122,9 @@ pub(crate) struct BcProg {
 pub(crate) struct ParsedArgDesc {
     pub req: usize,
     pub max: usize,
+    /// Upper bound as GNU reports it, before converting the packed signed
+    /// field to the nonnegative execution/storage limit.
+    pub reported_max: i128,
     pub has_rest: bool,
     pub dyn_names: Option<Vec<SymId>>,
     pub dyn_rest_index: Option<usize>,
@@ -239,7 +242,7 @@ pub(crate) fn exec(
             let parsed_argdesc = parse_argdesc(i, &argdesc);
             let wna_max = match &argdesc {
                 Value::Int(descriptor) => *descriptor >> 8,
-                _ => parsed_argdesc.max as i128,
+                _ => parsed_argdesc.reported_max,
             };
             let p = Rc::new(BcProg {
                 argdesc_key: key_a,
@@ -704,6 +707,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
             ParsedArgDesc {
                 req,
                 max,
+                reported_max: packed_max,
                 has_rest: rest,
                 dyn_names: None,
                 dyn_rest_index: None,
@@ -713,6 +717,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
         Value::Nil => ParsedArgDesc {
             req: 0,
             max: 0,
+            reported_max: 0,
             has_rest: false,
             dyn_names: Some(Vec::new()),
             dyn_rest_index: None,
@@ -727,6 +732,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
                 return ParsedArgDesc {
                     req: usize::MAX,
                     max: 0,
+                    reported_max: 0,
                     has_rest: false,
                     dyn_names: Some(Vec::new()),
                     dyn_rest_index: None,
@@ -801,6 +807,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
             ParsedArgDesc {
                 req,
                 max,
+                reported_max: max as i128,
                 has_rest: rest_index.is_some(),
                 dyn_names: Some(names),
                 dyn_rest_index: rest_index,
@@ -810,6 +817,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
         _ => ParsedArgDesc {
             req: 0,
             max: 0,
+            reported_max: 0,
             has_rest: false,
             dyn_names: None,
             dyn_rest_index: None,

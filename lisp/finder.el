@@ -203,11 +203,17 @@ from; the default is `load-path'."
       (let* ((d (car elem))
              (f (cdr elem))
              (package-override
-	      (intern-soft
-	       (cdr-safe
-	        (assoc (file-name-nondirectory
-                        (directory-file-name d))
-		       finder--builtins-alist)))))
+              (or
+               ;; The flat Remacs Lisp tree has no nxml/ subdirectory, so
+               ;; retain the package grouping for these nXML libraries.
+               (and (or (string-prefix-p "nxml-" f)
+                        (string-prefix-p "rng-nxml.el" f))
+                    'nxml)
+               (intern-soft
+                (cdr-safe
+                 (assoc (file-name-nondirectory
+                         (directory-file-name d))
+                        finder--builtins-alist)))))
         (progress-reporter-update progress (setq file-count (1+ file-count)))
         (unless (or (string-match finder-no-scan-regexp f)
 		    (null (setq base-name

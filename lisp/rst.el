@@ -2314,12 +2314,17 @@ When (a) and (b), just add the new list at current line.
 
 when (a) and not (b), a blank line is added before adding the new list.
 
-When not (a), first forward point to the end of the line, and add two
-blank lines, then add the new list.
+When not (a), first forward point to the end of the paragraph, and add
+two blank lines, then add the new list.
 
 When the following line is not blank, add a blank line after the new item.
 
 Other situations are just ignored and left to users themselves."
+  (unless (rst-forward-line-looking-at 0 'lin-end)
+    ;; reST paragraphs can span several lines.  Insert after the whole
+    ;; paragraph, not after whichever continuation line contains point.
+    (forward-paragraph 1)
+    (skip-chars-backward " \t\n"))
   (let* ((pfx-nls
 	  (if (rst-forward-line-looking-at 0 'lin-end)
 	      (if (not (rst-forward-line-looking-at -1 'lin-end #'not))

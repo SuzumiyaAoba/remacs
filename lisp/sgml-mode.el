@@ -326,12 +326,11 @@ Any terminating `>' or `/' is not matched.")
     (,(concat "</?\\(" sgml-namespace-re "\\)\\(?::\\(" sgml-name-re "\\)\\)?")
      (1 (if (match-end 2) 'sgml-namespace 'font-lock-function-name-face))
      (2 'font-lock-function-name-face nil t))
-    ;; FIXME: this doesn't cover the variables using a default value.
     ;; The first shy-group is an important anchor: it prevents an O(n^2)
     ;; pathological case where we otherwise keep retrying a failing match
     ;; against a very long word at every possible position within the word.
     (,(concat "\\(?:^\\|[ \t]\\)\\(" sgml-namespace-re "\\)\\(?::\\("
-	      sgml-name-re "\\)\\)?=[\"']")
+	      sgml-name-re "\\)\\)?[ \t]*=[ \t]*\\(?:[\"']\\|[^ \t\n>]\\)")
      (1 (if (match-end 2) 'sgml-namespace 'font-lock-variable-name-face))
      (2 font-lock-variable-name-face nil t))
     (,(concat "[&%]" sgml-name-re ";?") 0 'font-lock-variable-name-face)))

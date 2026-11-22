@@ -766,7 +766,6 @@ during the search."
 `reset-cdabbrev' must've been called already.
 This is sensitive to `case-fold-search'."
   ;; note that case-fold-search affects the behavior of this function
-  ;; Bug: won't pick up an expansion that starts at the top of buffer
   (if cdabbrev-current-window
       (let (saved-point
 	    saved-syntax
@@ -793,7 +792,8 @@ This is sensitive to `case-fold-search'."
 		       (not
 			(and
 			 ;; does it start with a separator char ?
-			 (or (= (setq syntax (char-syntax (preceding-char))) ? )
+			 (or (bobp)
+			     (= (setq syntax (char-syntax (preceding-char))) ? )
 			     (and (= syntax ?w)
 				  ;; symbol char to ignore at end.  Are we at end ?
 				  (progn

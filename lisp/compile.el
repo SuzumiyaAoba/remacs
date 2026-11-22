@@ -1704,7 +1704,8 @@ This updates the appropriate variable used by the mode-line."
 The errors recognized are the ones specified in RULES which default
 to `compilation-error-regexp-alist' if RULES is nil."
   (let ((case-fold-search compilation-error-case-fold-search)
-        (omake-included (memq 'omake compilation-error-regexp-alist)))
+        (omake-included
+         (memq 'omake (or rules compilation-error-regexp-alist))))
     (dolist (rule-item (or rules compilation-error-regexp-alist))
       (let* ((item
               (if (symbolp rule-item)

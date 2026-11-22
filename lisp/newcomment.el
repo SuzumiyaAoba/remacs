@@ -41,11 +41,8 @@
 ;;   if the corresponding closing marker happens to be right.
 ;; - uncomment-region with a numeric argument can render multichar
 ;;   comment markers invalid.
-;; - comment-indent or comment-region when called inside a comment
-;;   will happily break the surrounding comment.
-;; - comment-quote-nested will not (un)quote properly all nested comment
-;;   markers if there are more than just comment-start and comment-end.
-;;   For example, in Pascal where {...*) and (*...} are possible.
+;; - Commenting inside a block comment is rejected for languages without
+;;   nestable comments, rather than creating mismatched delimiters.
 
 ;;; Todo:
 
@@ -190,6 +187,10 @@ This should be locally set by each major mode if needed.")
   "Function to quote nested comments in a region.
 It takes the same arguments as `comment-quote-nested-default',
 and is called with the buffer narrowed to a single comment.")
+
+(defvar-local comment-nested-comment-pairs nil
+  "Additional nested comment delimiters as (START . END) pairs.
+Major modes can set this when several comment syntaxes are valid.")
 
 (defvar comment-continue nil
   "Continuation string to insert for multiline comments.
@@ -433,10 +434,10 @@ If UNP is non-nil, unquote nested comment markers."
 	     (> (length ce) 0))
     (funcall comment-quote-nested-function cs ce unp)))
 
-(defun comment-quote-nested-default (cs ce unp)
+(defun comment-quote-nested-default--quote-pair (cs ce unp)
   "Quote comment delimiters in the buffer.
 It expects to be called with the buffer narrowed to a single comment.
-It is used as a default for `comment-quote-nested-function'.
+It is a helper for the default comment-quoting function.
 
 The arguments CS and CE are strings matching comment starting and
 ending delimiters respectively.
@@ -467,6 +468,16 @@ change CE into !CS."
 	    (backward-char 2)
 	    (delete-char (- (match-end 0) (match-beginning 0)))
 	    (insert ce)))))))
+
+(defun comment-quote-nested-default (cs ce unp)
+  "Quote or unquote the current comment's nested delimiters."
+  (let* ((current (cons cs ce))
+         (pairs (copy-sequence comment-nested-comment-pairs)))
+    (unless (member current pairs)
+      (push current pairs))
+    (dolist (pair pairs)
+      (comment-quote-nested-default--quote-pair
+       (car pair) (cdr pair) unp))))
 
 ;;;;
 ;;;; Navigation
@@ -997,9 +1008,12 @@ This function is the default value of `uncomment-region-function'."
             (let ((opoint (point-marker)))
               (skip-syntax-backward " ")
               (delete-char (- numarg))
-              (unless (and (not (bobp))
-                           (save-excursion (goto-char (point-min))
-                                           (looking-at comment-start-skip)))
+              (unless (and (> (- (point) (point-min)) 0)
+                           (>= (- (point) (point-min))
+                               (length (comment-string-strip comment-start t t)))
+                           (save-excursion
+                             (goto-char (point-min))
+                             (looking-at comment-start-skip)))
                 ;; If there's something left but it doesn't look like
                 ;; a comment-start any more, just remove it.
                 (delete-region (point-min) opoint))))
@@ -1016,7 +1030,10 @@ This function is the default value of `uncomment-region-function'."
 	    (if (null arg) (delete-region (point) (point-max))
 	      (skip-syntax-forward " ")
 	      (delete-char numarg)
-	      (unless (or (eobp) (looking-at comment-end-skip))
+	      (unless (and (not (eobp))
+                           (>= (- (point-max) (point))
+                               (length (comment-string-strip comment-end t t)))
+                           (looking-at comment-end-skip))
 		;; If there's something left but it doesn't look like
 		;; a comment-end any more, just remove it.
 		(delete-region (point) (point-max)))))
@@ -1291,6 +1308,12 @@ changed with `comment-style'."
      ((consp arg) (uncomment-region beg end))
      ((< numarg 0) (uncomment-region beg end (- numarg)))
      (t
+      (when (and comment-end
+                 (not comment-nested-comment-pairs)
+                 (save-excursion
+                   (goto-char beg)
+                   (comment-beginning)))
+        (user-error "Cannot comment a region inside an existing comment"))
       (let ((multi-char (/= (string-match "[ \t]*\\'" comment-start) 1))
 	    indent triple)
 	(if (eq (nth 3 style) 'multi-char)

@@ -1948,24 +1948,29 @@ to a given widget."
 (defun widget-default-value-set (widget value)
   "Recreate widget with new value."
   (let* ((old-pos (point))
-	 (from (copy-marker (widget-get widget :from)))
-	 (to (copy-marker (widget-get widget :to)))
-	 (offset (if (and (<= from old-pos) (<= old-pos to))
-		     (if (>= old-pos (1- to))
-			 (- old-pos to 1)
-		       (- old-pos from)))))
-    ;;??? Bug: this ought to insert the new value before deleting the old one,
-    ;; so that markers on either side of the value automatically
-    ;; stay on the same side.  -- rms.
+	 (old-widget (widget-copy widget))
+	 (old-from (widget-get old-widget :from))
+	 (old-to (widget-get old-widget :to))
+	 (old-from-pos (marker-position old-from))
+	 (old-to-pos (marker-position old-to))
+	 (offset (if (and (<= old-from-pos old-pos) (<= old-pos old-to-pos))
+		     (if (>= old-pos (1- old-to-pos))
+			 (- old-pos old-to-pos 1)
+		       (- old-pos old-from-pos)))
+         new-from new-to)
     (save-excursion
-      (goto-char (widget-get widget :from))
-      (widget-apply widget :delete)
+      ;; Insert the replacement before deleting the old contents so markers
+      ;; on either side of the value stay on their original side.
+      (goto-char old-from-pos)
       (widget-put widget :value value)
-      (widget-apply widget :create))
+      (widget-apply widget :create)
+      (setq new-from (widget-get widget :from)
+            new-to (widget-get widget :to))
+      (widget-apply old-widget :delete))
     (if offset
 	(goto-char (if (< offset 0)
-	               (+ (widget-get widget :to) offset 1)
-	             (min (+ from offset) (1- (widget-get widget :to))))))))
+	               (+ new-to offset 1)
+	             (min (+ new-from offset) (1- new-to)))))))
 
 (defun widget-default-value-inline (widget)
   "Wrap value in a list unless it is inline."

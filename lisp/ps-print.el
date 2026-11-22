@@ -5437,6 +5437,17 @@ XSTART YSTART are the relative position for the first page in a sheet.")
   "Alist for zebra stripe continuation.")
 
 
+(defun ps-print--dsc-encode-text (string)
+  "Return STRING as safe ASCII text for a DSC comment."
+  (let ((bytes (encode-coding-string string 'utf-8-unix)))
+    (mapconcat
+     (lambda (byte)
+       (if (and (<= 32 byte) (< byte 127) (not (= byte ?\\)))
+           (char-to-string byte)
+         (format "\\%03o" byte)))
+     (string-to-list bytes)
+     "")))
+
 (defun ps-begin-file ()
   (setq ps-page-order 0
 	ps-page-printed 0
@@ -5455,8 +5466,9 @@ XSTART YSTART are the relative position for the first page in a sheet.")
      "%%Title: " (buffer-name)		; Take job name from name of
 					; first buffer printed
      "\n%%Creator: GNU Emacs " emacs-version
-     "\n%%For: " (user-full-name)       ;FIXME: may need encoding!
-     "\n%%CreationDate: " (format-time-string "%T %b %d %Y") ;FIXME: encoding!
+     "\n%%For: " (ps-print--dsc-encode-text (user-full-name))
+     "\n%%CreationDate: "
+     (ps-print--dsc-encode-text (format-time-string "%T %b %d %Y"))
      "\n%%Orientation: "
      (if ps-landscape-mode "Landscape" "Portrait")
      "\n%%DocumentNeededResources: font Times-Roman Times-Italic\n%%+ font "
@@ -6369,8 +6381,10 @@ If FACE is not a valid face name, use default face."
 	   (fg-color (if (and ps-color-p foreground)
 			 (ps-color-scale foreground)
 		       ps-default-color))
-	   (bg-color (and ps-color-p background
-			  (ps-color-scale background))))
+           (bg-color (and ps-color-p
+                          (or (and background
+                                   (ps-color-scale background))
+                              ps-default-background)))
       (ps-plot-region
        from to
        (ps-font-number 'ps-font-for-text

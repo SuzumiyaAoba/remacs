@@ -2505,6 +2505,7 @@ workarea attribute."
 (declare-function x-frame-list-z-order "xfns.c" (&optional display))
 (declare-function w32-frame-list-z-order "w32fns.c" (&optional display))
 (declare-function ns-frame-list-z-order "nsfns.m" (&optional display))
+(declare-function gpui-frame-list-z-order "frame.c" (&optional display))
 ;; TODO: implement this on PGTK.
 ;; (declare-function pgtk-frame-list-z-order "pgtkfns.c" (&optional display))
 (declare-function haiku-frame-list-z-order "haikufns.c" (&optional display))
@@ -2530,6 +2531,8 @@ Return nil if DISPLAY contains no Emacs frame."
       (w32-frame-list-z-order display))
      ((eq frame-type 'ns)
       (ns-frame-list-z-order display))
+     ((eq frame-type 'gpui)
+      (gpui-frame-list-z-order display))
      ((eq frame-type 'pgtk)
       ;; This is currently not supported on PGTK.
       ;; (pgtk-frame-list-z-order display)
@@ -2545,6 +2548,7 @@ Return nil if DISPLAY contains no Emacs frame."
 (declare-function w32-frame-restack "w32fns.c" (frame1 frame2 &optional above))
 (declare-function ns-frame-restack "nsfns.m" (frame1 frame2 &optional above))
 (declare-function pgtk-frame-restack "pgtkfns.c" (frame1 frame2 &optional above))
+(declare-function gpui-frame-restack "frame.c" (frame1 frame2 &optional above))
 (declare-function haiku-frame-restack "haikufns.c" (frame1 frame2 &optional above))
 (declare-function android-frame-restack "androidfns.c" (frame1 frame2
                                                                &optional above))
@@ -2579,6 +2583,8 @@ Some window managers may refuse to restack windows."
           (w32-frame-restack frame1 frame2 above))
          ((eq frame-type 'ns)
           (ns-frame-restack frame1 frame2 above))
+         ((eq frame-type 'gpui)
+          (gpui-frame-restack frame1 frame2 above))
          ((eq frame-type 'haiku)
           (haiku-frame-restack frame1 frame2 above))
          ((eq frame-type 'pgtk)
@@ -2797,7 +2803,7 @@ frame's display)."
 This means that, for example, DISPLAY can differentiate between
 the keybinding RET and [return]."
   (let ((frame-type (framep-on-display display)))
-    (or (memq frame-type '(x w32 ns pc pgtk haiku android))
+    (or (memq frame-type '(x w32 ns pc pgtk gpui haiku android))
         ;; MS-DOS and MS-Windows terminals have built-in support for
         ;; function (symbol) keys
         (memq system-type '(ms-dos windows-nt)))))

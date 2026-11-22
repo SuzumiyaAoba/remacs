@@ -499,20 +499,33 @@ not put into a single thread."
 
 (defsubst mh-thread-group-by-subject (roots)
   "Group the set of message containers, ROOTS based on subject.
-Bug: Check for and make sure that something without Re: is made
-the parent in preference to something that has it."
+Prefer a subject without a reply prefix as the parent."
   (clrhash mh-thread-subject-container-hash)
   (let ((results ()))
     (dolist (root roots)
       (let* ((subject (mh-thread-container-subject root))
              (parent (gethash subject mh-thread-subject-container-hash)))
-        (cond (parent (mh-thread-remove-parent-link root)
-                      (mh-thread-add-link parent root t)
-                      (setf (mh-container-real-child-p root) nil)
-                      (push `(SUBJECT ,root) mh-thread-history))
-              (t
-               (setf (gethash subject mh-thread-subject-container-hash) root)
-               (push root results)))))
+        (cond
+         ((and parent
+               (mh-message-subject-re-p
+                (mh-container-message parent))
+               (not (mh-message-subject-re-p
+                     (mh-container-message root))))
+          (mh-thread-add-link root parent t)
+          (setf (mh-container-real-child-p parent) nil
+                (gethash subject mh-thread-subject-container-hash) root
+                results
+                (mapcar (lambda (item)
+                          (if (eq item parent) root item))
+                        results))
+          (push (list 'SUBJECT parent) mh-thread-history))
+         (parent (mh-thread-remove-parent-link root)
+                 (mh-thread-add-link parent root t)
+                 (setf (mh-container-real-child-p root) nil)
+                 (push (list 'SUBJECT root) mh-thread-history))
+         (t
+          (setf (gethash subject mh-thread-subject-container-hash) root)
+          (push root results)))))
     (nreverse results)))
 
 (defun mh-thread-container-subject (container)

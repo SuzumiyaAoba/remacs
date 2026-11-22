@@ -2823,7 +2823,7 @@ fn signature_lambda_arity(
                 if parsed.has_rest {
                     Ok(Arity::Many { min: req })
                 } else {
-                    let max = u16::try_from(parsed.max).map_err(|_| {
+                    let max = u16::try_from(parsed.reported_max).map_err(|_| {
                         i.signal_data(sym::INVALID_FUNCTION, vec![Value::Lambda(l.clone())])
                     })?;
                     Ok(Arity::Range { min: req, max })

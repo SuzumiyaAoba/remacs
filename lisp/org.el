@@ -16035,6 +16035,16 @@ buffer."
          (member (file-truename fname)
                  (mapcar #'file-truename (org-agenda-files t))))))
 
+(defun org--finish-edit-agenda-file-list ()
+  "Close the edited agenda file list and restore its saved window layout."
+  (let ((buffer (current-buffer))
+        (configuration org-window-configuration))
+    (remove-hook 'after-save-hook #'org--finish-edit-agenda-file-list t)
+    (kill-buffer buffer)
+    (set-window-configuration configuration)
+    (org-install-agenda-files-menu)
+    (message "New agenda file list installed")))
+
 (defun org-edit-agenda-file-list ()
   "Edit the list of agenda files.
 Depending on setup, this either uses customize to edit the variable
@@ -16047,13 +16057,7 @@ the buffer and restores the previous window configuration."
 	(find-file org-agenda-files)
 	(setq-local org-window-configuration cw)
 	(add-hook 'after-save-hook
-		  (lambda ()
-		    (set-window-configuration
-		     (prog1 org-window-configuration
-		       (kill-buffer (current-buffer))))
-		    (org-install-agenda-files-menu)
-		    (message "New agenda file list installed"))
-		  nil 'local)
+                  #'org--finish-edit-agenda-file-list nil t)
 	(message "%s" (substitute-command-keys
 		       "Edit list and finish with \\[save-buffer]")))
     (customize-variable 'org-agenda-files)))

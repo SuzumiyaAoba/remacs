@@ -642,9 +642,10 @@ pub(super) fn step_op(
             }
         }
         113 => scall!("set-buffer", 1),
-        // save-current-buffer: records the current buffer for a later
-        // `unbind'.
-        114 => unwinds.push(Unwind::SaveCurrentBuffer(i.current_buffer)),
+        // save-current-buffer: opcode 97 is the obsolete spelling still
+        // used by old byte-code; both forms record the current buffer for
+        // a later `unbind'.
+        97 | 114 => unwinds.push(Unwind::SaveCurrentBuffer(i.current_buffer)),
         // interactive-p (obsolete since Emacs 23, never emitted).
         116 => push!(Value::Nil),
         117 => scall!("forward-char", 1),

@@ -9725,9 +9725,8 @@ More precisely, a char with closeparen syntax is self-inserted.")
              blink-paren-function
              (not executing-kbd-macro)
              (not noninteractive)
+             (not (nth 8 (syntax-ppss (1- (point)))))
 	     ;; Verify an even number of quoting characters precede the close.
-             ;; FIXME: Also check if this parenthesis closes a comment as
-             ;; can happen in Pascal and SML.
 	     (oddp (- (point)
 		      (save-excursion
 			(forward-char -1)
@@ -10596,6 +10595,32 @@ the minibuffer; no further functions will be called.
 If all functions in the list return nil, that means to use
 the default method of inserting the completion in BUFFER.")
 
+(defun completion--choose-completion-end (choice start)
+  "Guess the replacement end for CHOICE inserted at START.
+When point is in the middle of a completion and the text after point
+already matches the rest of CHOICE, include that text in the replacement."
+  (let* ((point (point))
+         (start (if (markerp start) (marker-position start) start))
+         (prefix (buffer-substring-no-properties start point))
+         (prefix-length (length prefix)))
+    (if (and (<= start point)
+             (<= prefix-length (length choice))
+             (equal prefix (substring-no-properties choice 0 prefix-length)))
+        (let* ((suffix (substring-no-properties choice prefix-length))
+               (end (+ point (length suffix))))
+          (if (and (<= end (point-max))
+                   (equal suffix
+                          (buffer-substring-no-properties point end)))
+              (if (or (eq (char-before end) ?/)
+                      (eq (char-after end) ?/))
+                  end
+                (while (and (< end (point-max))
+                            (memq (char-syntax (char-after end)) '(?w ?_)))
+                  (setq end (1+ end)))
+                end)
+            point))
+      point)))
+
 (defun choose-completion-string (choice &optional
                                         buffer base-position insert-function)
   "Switch to BUFFER and insert the completion choice CHOICE.
@@ -10629,10 +10654,11 @@ back on `completion-list-insert-choice-function' when nil."
         ;; comes from buffer-substring-no-properties.
         ;;(remove-text-properties 0 (length choice) '(mouse-face nil) choice)
 	;; Insert the completion into the buffer where it was requested.
-        (funcall (or insert-function completion-list-insert-choice-function)
-                 (or (car base-position) (point))
-                 (or (cadr base-position) (point))
-                 choice)
+        (let* ((base (or (car base-position) (point)))
+               (end (or (cadr base-position)
+                        (completion--choose-completion-end choice base))))
+          (funcall (or insert-function completion-list-insert-choice-function)
+                   base end choice))
         ;; Update point in the window that BUFFER is showing in.
 	(let ((window (get-buffer-window buffer t)))
 	  (set-window-point window (point)))

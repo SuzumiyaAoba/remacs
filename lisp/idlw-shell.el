@@ -681,6 +681,14 @@ This is evaluated if it is a list or called with funcall.")
 (defvar idlwave-shell-sentinel-hook nil
   "Hook run when the IDL process exits.")
 
+(defun idlwave-shell--write-paths-on-exit ()
+  "Save new IDL paths when the shell process exits."
+  (when (and idlwave-auto-write-paths
+             idlwave-path-alist
+             (not idlwave-library-path)
+             (get 'idlwave-path-alist 'from-shell))
+    (idlwave-write-paths)))
+
 (defvar idlwave-shell-hide-output nil
   "If non-nil the process output is not inserted into the output buffer.")
 
@@ -1166,13 +1174,7 @@ See also the variable `idlwave-shell-prompt-pattern'.
 	  (select-window window))))
   ;; Save the paths at the end, if they are from the Shell and new.
   (add-hook 'idlwave-shell-sentinel-hook
-	    (lambda ()
-	      (if (and
-		   idlwave-auto-write-paths
-		   idlwave-path-alist
-		   (not idlwave-library-path)
-		   (get 'idlwave-path-alist 'from-shell))
-		  (idlwave-write-paths)))))
+            #'idlwave-shell--write-paths-on-exit))
 
 (defun idlwave-shell-recenter-shell-window (&optional arg)
   "Run `idlwave-shell', but make sure the current window stays selected."

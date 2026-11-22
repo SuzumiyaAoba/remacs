@@ -749,6 +749,8 @@ pub fn run_gui_with_dump(
                             );
                             let fullscreen = snapshot.fullscreen.clone();
                             let frame_size = (snapshot.width, snapshot.height);
+                            let frame_width_size = snapshot.width_size;
+                            let frame_height_size = snapshot.height_size;
                             let frame_left = snapshot.left;
                             let frame_top = snapshot.top;
                             let no_accept_focus = snapshot.no_accept_focus;
@@ -861,6 +863,9 @@ pub fn run_gui_with_dump(
                                             cx,
                                             frame_size.0,
                                             frame_size.1,
+                                            frame_width_size,
+                                            frame_height_size,
+                                            internal_border_width,
                                             frame_left,
                                             frame_top,
                                             requested_parent_bounds,
@@ -954,6 +959,9 @@ pub fn run_gui_with_dump(
                                             cx,
                                             frame_size.0,
                                             frame_size.1,
+                                            frame_width_size,
+                                            frame_height_size,
+                                            internal_border_width,
                                             initial_left,
                                             initial_top,
                                             None,
@@ -1191,6 +1199,31 @@ pub fn run_gui_with_dump(
                             &mut pending_frame_orders,
                             cx,
                         );
+                    }
+                    GuiRequest::FrameRestack {
+                        frame_id,
+                        relative_to,
+                        above,
+                        reply,
+                    } => {
+                        let result = match (
+                            windows.get(&frame_id).copied(),
+                            windows.get(&relative_to).copied(),
+                        ) {
+                            (Some(frame), Some(sibling)) if frame_id != relative_to => frame
+                                .update(cx, move |_view, frame_window, frame_cx| {
+                                    sibling.update(frame_cx, |_view, sibling_window, _| {
+                                        frame_window
+                                            .restack_relative_to(sibling_window, above)
+                                    })
+                                })
+                                .map_err(|error| error.to_string())
+                                .and_then(|result| result.map_err(|error| error.to_string()))
+                                .and_then(|result| result.map_err(|error| error.to_string())),
+                            (Some(_), Some(_)) => Ok(()),
+                            _ => Err("GUI frame window is not available".to_owned()),
+                        };
+                        let _ = reply.send(result);
                     }
                     GuiRequest::FrameListZOrder { reply } => {
                         let result = cx
@@ -2363,12 +2396,48 @@ fn apply_frame_snapshot_bounds(
     cx: &mut Context<EditorView>,
     width: usize,
     height: usize,
+    width_size: Option<FrameSizeSpec>,
+    height_size: Option<FrameSizeSpec>,
+    internal_border_width: usize,
     left: Option<FramePosition>,
     top: Option<FramePosition>,
     parent_bounds: Option<Bounds<Pixels>>,
 ) {
     if view.needs_frame_size_update(width, height) {
         view.resize_to_cells(width, height, window);
+    }
+    if width_size.is_some() || height_size.is_some() {
+        let (_, _, cell_width, line_height) = view::frame_font_metrics(&view.grid, window);
+        let default_size = frame_pixel_size(
+            width,
+            height,
+            &view.grid,
+            cell_width,
+            line_height,
+            internal_border_width,
+        );
+        let workarea = window.display(cx).map(|display| display.bounds().size);
+        let border = px(internal_border_width as f32 * 2.0);
+        let desired = size(
+            frame_size_dimension(
+                width_size,
+                default_size.width,
+                workarea.map(|size| size.width),
+                border,
+            ),
+            frame_size_dimension(
+                height_size,
+                default_size.height,
+                workarea.map(|size| size.height),
+                border,
+            ),
+        );
+        let current = window.viewport_size();
+        if (f32::from(current.width) - f32::from(desired.width)).abs() >= 1.0
+            || (f32::from(current.height) - f32::from(desired.height)).abs() >= 1.0
+        {
+            window.resize(desired);
+        }
     }
     let position_changed = view.needs_frame_position_update(
         left,

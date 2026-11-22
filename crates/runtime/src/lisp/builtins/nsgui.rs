@@ -1247,9 +1247,45 @@ fn f_ns_send_items(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 /// `ns-frame-restack': GNU nsfns.m decodes FRAME1 then FRAME2 with
 /// decode_live_frame, then hits check_window_system.
 fn f_ns_frame_restack(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
-    let _ = crate::editor::frame_live(i, &a[0])?;
-    let _ = crate::editor::frame_live(i, &a[1])?;
-    Err(winsys(i))
+    let frame1 = crate::editor::frame_live(i, &a[0])?;
+    let frame2 = crate::editor::frame_live(i, &a[1])?;
+    if !crate::editor::frame_is_nextstep(i, &frame1)
+        || !crate::editor::frame_is_nextstep(i, &frame2)
+    {
+        return Err(winsys(i));
+    }
+    let frame1_id = frame1.borrow().id;
+    let frame2_id = frame2.borrow().id;
+    let Some(backend) = i.frame_window_backend.clone() else {
+        return Err(winsys(i));
+    };
+    backend
+        .prepare_frame(i, frame1_id)
+        .and_then(|()| backend.prepare_frame(i, frame2_id))
+        .and_then(|()| backend.restack(frame1_id, frame2_id, a.get(2).is_some_and(Value::truthy)))
+        .map_err(|error| i.error(format!("Unable to restack NS frames: {error}")))?;
+    Ok(Value::Nil)
+}
+
+fn f_ns_set_auto_hide_menu_bar(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    const AUTO_HIDE_MENU_BAR: usize = 1 << 2;
+    let Some(o) = objc() else {
+        return Err(winsys(i));
+    };
+    let app = ns_app(o);
+    if app == 0 {
+        return Err(winsys(i));
+    }
+    let current = unsafe { (o.int0)(app, sel(o, "presentationOptions")) as usize };
+    let options = if a[0].truthy() {
+        current | AUTO_HIDE_MENU_BAR
+    } else {
+        current & !AUTO_HIDE_MENU_BAR
+    };
+    unsafe {
+        (o.void1)(app, sel(o, "setPresentationOptions:"), options);
+    }
+    Ok(Value::Nil)
 }
 
 /// `ns-begin-drag': GNU nsselect.m rejects a nil PBOARD first, then decodes
@@ -1502,7 +1538,15 @@ fn frame_is_child_of(
     false
 }
 
-fn f_ns_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+fn f_frame_list_z_order_for(
+    i: &mut Interp,
+    a: crate::lisp::Argv,
+    window_system: &str,
+) -> EvalResult {
+    let frame_matches = |i: &Interp, frame: &crate::lisp::value::FrameRef| {
+        matches!(crate::editor::frame_system_type(i, frame),
+                 Value::Sym(system) if i.symbol_name(system) == window_system)
+    };
     let parent_id = match a.get(0) {
         Some(Value::Frame(parent)) if !parent.borrow().dead => Some(parent.borrow().id),
         _ => None,
@@ -1517,14 +1561,14 @@ fn f_ns_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         let mut order = Vec::new();
         if let Some(frame) = i.selected_frame.as_ref()
             && !frame.borrow().dead
-            && crate::editor::frame_is_nextstep(i, frame)
+            && frame_matches(i, frame)
         {
             order.push(frame.borrow().id);
         }
         for frame in &i.frames {
             let frame_ref = frame.borrow();
             if !frame_ref.dead
-                && crate::editor::frame_is_nextstep(i, frame)
+                && frame_matches(i, frame)
                 && !order.contains(&frame_ref.id)
             {
                 order.push(frame_ref.id);
@@ -1542,7 +1586,7 @@ fn f_ns_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
                 .iter()
                 .find(|frame| frame.borrow().id == id && !frame.borrow().dead)?
                 .clone();
-            if !crate::editor::frame_is_nextstep(i, &frame)
+            if !frame_matches(i, &frame)
                 || parent_id.is_some_and(|parent| !frame_is_child_of(&frame, parent, &parent_key))
             {
                 return None;
@@ -1551,6 +1595,33 @@ fn f_ns_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         })
         .collect();
     Ok(Value::list(frames))
+}
+
+fn f_ns_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    f_frame_list_z_order_for(i, a, "ns")
+}
+
+fn f_gpui_frame_list_z_order(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    f_frame_list_z_order_for(i, a, "gpui")
+}
+
+fn f_gpui_frame_restack(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
+    let frame1 = crate::editor::frame_live(i, &a[0])?;
+    let frame2 = crate::editor::frame_live(i, &a[1])?;
+    if !crate::editor::frame_is_gpui(i, &frame1) || !crate::editor::frame_is_gpui(i, &frame2) {
+        return Err(winsys(i));
+    }
+    let frame1_id = frame1.borrow().id;
+    let frame2_id = frame2.borrow().id;
+    let Some(backend) = i.frame_window_backend.clone() else {
+        return Err(winsys(i));
+    };
+    backend
+        .prepare_frame(i, frame1_id)
+        .and_then(|()| backend.prepare_frame(i, frame2_id))
+        .and_then(|()| backend.restack(frame1_id, frame2_id, a.get(2).is_some_and(Value::truthy)))
+        .map_err(|error| i.error(format!("Unable to restack GPUI frames: {error}")))?;
+    Ok(Value::Nil)
 }
 
 fn f_ns_display_monitor_attributes_list(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
@@ -1707,6 +1778,13 @@ pub(crate) static SUBRS: &[Subr] = &[
         "Restack FRAME1 above FRAME2."
     ),
     S!(
+        "ns-set-auto-hide-menu-bar",
+        1,
+        1,
+        f_ns_set_auto_hide_menu_bar,
+        "Set whether the native macOS menu bar is automatically hidden."
+    ),
+    S!(
         "ns-frame-edges",
         0,
         2,
@@ -1719,6 +1797,20 @@ pub(crate) static SUBRS: &[Subr] = &[
         1,
         f_ns_frame_geometry,
         "Return geometric attributes of FRAME."
+    ),
+    S!(
+        "gpui-frame-list-z-order",
+        0,
+        1,
+        f_gpui_frame_list_z_order,
+        "Return GPUI frames in native Z (stacking) order."
+    ),
+    S!(
+        "gpui-frame-restack",
+        2,
+        3,
+        f_gpui_frame_restack,
+        "Restack two GPUI frames without changing input focus."
     ),
     S!(
         "ns-frame-list-z-order",

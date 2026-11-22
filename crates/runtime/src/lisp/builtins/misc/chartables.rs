@@ -1623,6 +1623,30 @@ pub(crate) fn ct_collect(i: &Interp, table: &Value) -> Vec<(u32, u32, Value)> {
         .collect()
 }
 
+/// Resolve one map-char-table value against the table's own default and
+/// its direct parent.  This matches `ct_effective_runs(..., true)` while
+/// reading the current slot each time a callback is about to run.
+fn ct_map_current_value(i: &Interp, table: &Value, code: usize) -> Value {
+    let own = char_table_raw(i, table, code);
+    if !own.is_nil() {
+        return own;
+    }
+    let default = i.char_table_defalt(table);
+    if !default.is_nil() {
+        return default;
+    }
+    let parent = i.char_table_parent(table);
+    if parent.is_nil() {
+        return Value::Nil;
+    }
+    let inherited = char_table_raw(i, &parent, code);
+    if !inherited.is_nil() {
+        inherited
+    } else {
+        i.char_table_defalt(&parent)
+    }
+}
+
 pub(super) fn f_map_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     if !is_char_table(i, &a[1]) {
         return Err(i.wrong_type_mut("char-table-p", &a[1]));
@@ -1642,7 +1666,11 @@ pub(super) fn f_map_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     // showing the final mutation; mirror that.
     let range = Value::cons(Value::Int(0), Value::Int(0));
     let mut last: Option<(u32, u32)> = None;
-    for (from, to, val) in runs.into_iter().filter(|(_, _, v)| !v.is_nil()) {
+    for (from, to, _) in runs {
+        let val = ct_map_current_value(i, &a[1], from as usize);
+        if val.is_nil() {
+            continue;
+        }
         last = Some((from, to));
         // GNU updates the shared range even when this callback receives
         // a fixnum. A previously retained cons must already show the

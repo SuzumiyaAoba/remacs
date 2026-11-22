@@ -2853,6 +2853,10 @@ summary buffer."
     (setq gnus-article-browse-html-temp-list nil))
   gnus-article-browse-html-temp-list)
 
+(defun gnus-article-browse-delete-temp-files-at-exit ()
+  "Delete temporary HTML files when Gnus exits."
+  (gnus-article-browse-delete-temp-files t))
+
 (defun gnus-article-browse-html-save-cid-content (cid handles directory)
   "Find CID content in HANDLES and save it in a file in DIRECTORY.
 Return file name relative to the parent of DIRECTORY."
@@ -3078,8 +3082,7 @@ message header will be added to the bodies of the \"text/html\" parts."
 	     (add-hook 'gnus-summary-prepare-exit-hook
 		       #'gnus-article-browse-delete-temp-files)
 	     (add-hook 'gnus-exit-gnus-hook
-		       (lambda  ()
-			 (gnus-article-browse-delete-temp-files t)))
+		       #'gnus-article-browse-delete-temp-files-at-exit)
 	     ;; FIXME: Warn if there's an <img> tag?
 	     (browse-url-of-file (or tmp-file (expand-file-name file)))
 	     (setq showed t))

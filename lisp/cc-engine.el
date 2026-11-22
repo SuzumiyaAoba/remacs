@@ -941,6 +941,9 @@ comment at the start of cc-engine.el for more info."
 	;; for a statement start, e.g. an opening brace or a macro start, or a
 	;; keyword like `if' when the PDA stack is empty.
 	pre-stmt-found
+	;; Non-nil when the current scan stopped at a recognized
+	;; statement-start keyword.
+	known-stmt-start
 	;; The position of the last sexp or bound that follows the
 	;; first found colon, i.e. the start of the nonlabel part of
 	;; the statement.  It's `start' if a colon is found just after
@@ -1033,6 +1036,7 @@ comment at the start of cc-engine.el for more info."
 	;; 6. From macro `c-bos-pop-state-and-retry' when the stack is empty.
 	(while
 	    (catch 'loop ;; Throw nil to break, non-nil to continue.
+	      (setq known-stmt-start nil)
 	      (cond
 	       ;; Are we in a macro, just after the opening #?
 	       ((save-excursion
@@ -1062,7 +1066,8 @@ comment at the start of cc-engine.el for more info."
 	       ;; statement boundary or passed a "while"-like token.
 	       ((or sym
 		    (and (looking-at cond-key)
-			 (setq sym (intern (match-string 1)))))
+			 (setq sym (intern (match-string 1))
+			       known-stmt-start t)))
 
 		(when (and (< pos start) (null stack))
 		  (setq pre-stmt-found t)
@@ -1450,6 +1455,20 @@ comment at the start of cc-engine.el for more info."
 		    (and (not (c-at-vsemi-p (point)))
 			 (/= (skip-chars-backward "-.+!*&~@`#") 0))))
 	(setq pos (point)))
+
+	;; When IGNORE-LABELS is requested, labels belong to the statement
+	;; following them.  The main scan can stop at a recognized statement-start
+	;; keyword before it crosses the label's colon, so make one bounded
+	;; label-aware pass from that keyword to include any preceding label.
+	(when (and (eq ignore-labels t) pre-stmt-found known-stmt-start)
+	  (let (label-start)
+	    (save-excursion
+	      (goto-char pos)
+	      (when (eq (c-beginning-of-statement-1 lim nil t comma-delim hit-lim)
+	                'label)
+	        (setq label-start (point))))
+	    (when label-start
+	      (setq pos label-start))))
 
       (goto-char pos)
       ret)))

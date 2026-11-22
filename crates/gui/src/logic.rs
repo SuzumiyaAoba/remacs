@@ -688,6 +688,12 @@ pub(super) enum GuiRequest {
         frame_id: usize,
         raise: bool,
     },
+    FrameRestack {
+        frame_id: usize,
+        relative_to: usize,
+        above: bool,
+        reply: SyncSender<Result<(), String>>,
+    },
     FrameListZOrder {
         reply: SyncSender<Result<Vec<usize>, String>>,
     },
@@ -1332,6 +1338,21 @@ impl remacs_runtime::frontend::FrameWindowBackend for GuiFrameVisibilityBackend 
                 raise: false,
             })
             .map_err(|_| "GUI window service is unavailable".to_owned())
+    }
+
+    fn restack(&self, frame_id: usize, relative_to: usize, above: bool) -> Result<(), String> {
+        let (reply, response) = mpsc::sync_channel(1);
+        self.requests
+            .send_blocking(GuiRequest::FrameRestack {
+                frame_id,
+                relative_to,
+                above,
+                reply,
+            })
+            .map_err(|_| "GUI window service is unavailable".to_owned())?;
+        response
+            .recv()
+            .map_err(|_| "GUI window service stopped".to_owned())?
     }
 
     fn frame_list_z_order(&self) -> Result<Vec<usize>, String> {

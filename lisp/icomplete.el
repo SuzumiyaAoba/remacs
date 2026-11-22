@@ -915,8 +915,8 @@ by `group-function''s second \"transformation\" protocol."
       (let* ((column (current-column))
              (prefix-indicator-width
               (if icomplete-vertical-render-prefix-indicator
-                  (max (length icomplete-vertical-selected-prefix-indicator)
-                       (length icomplete-vertical-unselected-prefix-indicator))
+                  (max (string-width icomplete-vertical-selected-prefix-indicator)
+                       (string-width icomplete-vertical-unselected-prefix-indicator))
                 0))
              (wrapped-line (with-current-buffer buffer
                              (save-excursion
@@ -924,7 +924,7 @@ by `group-function''s second \"transformation\" protocol."
                                (beginning-of-line)
                                (count-screen-lines (point) (car data)))))
              (window-width (+ (window-hscroll) (window-body-width)))
-             (longest-line-width (apply #'max (mapcar #'length lines)))
+             (longest-line-width (apply #'max (mapcar #'string-width lines)))
              (spaces-to-add
               (if (> wrapped-line 1)
                   (- column (* (- wrapped-line 1) (- window-width 5)))
@@ -1038,8 +1038,8 @@ away from the bottom.  Counts wrapped lines as real lines."
     ;; accumulators are unsupported.)
     (let (mpl mcl)
       (dolist (tup tuples)
-        (setq mpl (max (or mpl 0) (length (cadr tup)))
-              mcl (max (or mcl 0) (length (car tup)))))
+        (setq mpl (max (or mpl 0) (string-width (cadr tup)))
+              mcl (max (or mcl 0) (string-width (car tup)))))
       (setq max-prefix-len mpl
             max-comp-len mcl))
     ;; Serialize completions and section titles into a list
@@ -1061,10 +1061,12 @@ away from the bottom.  Counts wrapped lines as real lines."
             (add-face-text-property 0 (length comp)
                                     'icomplete-selected-match 'append comp))
           (push (concat prefix
-                        (make-string (max 0 (- max-prefix-len (length prefix))) ? )
+                        (make-string (max 0 (- max-prefix-len
+                                               (string-width prefix))) ? )
                         (completion-lazy-hilit comp)
                         (and suffix
-                             (make-string (max 0 (- max-comp-len (length comp)))
+                             (make-string (max 0 (- max-comp-len
+                                                    (string-width comp)))
                                           ? ))
                         suffix)
                 lines-aux)))

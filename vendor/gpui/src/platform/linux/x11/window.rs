@@ -317,7 +317,11 @@ impl rwh::HasDisplayHandle for RawWindow {
 
 impl rwh::HasWindowHandle for X11Window {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let Some(window) = NonZeroU32::new(self.0.x_window) else {
+            return Err(rwh::HandleError::Unavailable);
+        };
+        let handle = rwh::XcbWindowHandle::new(window);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
 impl rwh::HasDisplayHandle for X11Window {
@@ -1437,6 +1441,33 @@ impl PlatformWindow for X11Window {
             )
             .log_err();
         xcb_flush(&self.0.xcb);
+    }
+
+    fn restack_relative_to(&self, sibling: rwh::RawWindowHandle, above: bool) -> anyhow::Result<()> {
+        let sibling = match sibling {
+            rwh::RawWindowHandle::Xcb(window) => window.window.get(),
+            rwh::RawWindowHandle::Xlib(window) => window.window as u32,
+            _ => anyhow::bail!("sibling is not an X11 window"),
+        };
+        let sibling = xproto::Window::from(sibling);
+        if sibling == self.0.x_window {
+            return Ok(());
+        }
+        check_reply(
+            || "X11 ConfigureWindow relative restack failed.",
+            self.0.xcb.configure_window(
+                self.0.x_window,
+                &xproto::ConfigureWindowAux::new()
+                    .sibling(sibling)
+                    .stack_mode(if above {
+                        xproto::StackMode::ABOVE
+                    } else {
+                        xproto::StackMode::BELOW
+                    }),
+            ),
+        )?;
+        xcb_flush(&self.0.xcb);
+        Ok(())
     }
 
     fn set_always_on_top(&self, always_on_top: bool) {

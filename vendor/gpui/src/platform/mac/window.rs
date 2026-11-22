@@ -1396,6 +1396,31 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn restack_relative_to(&self, sibling: rwh::RawWindowHandle, above: bool) -> anyhow::Result<()> {
+        let rwh::RawWindowHandle::AppKit(sibling) = sibling else {
+            return Err(anyhow::anyhow!("sibling is not an AppKit window"));
+        };
+        let sibling_view = sibling.ns_view.as_ptr() as id;
+        let sibling_window: id = unsafe { msg_send![sibling_view, window] };
+        if sibling_window.is_null() {
+            return Err(anyhow::anyhow!("sibling AppKit view has no window"));
+        }
+        let window = self.0.lock().native_window;
+        if window == sibling_window {
+            return Ok(());
+        }
+        let order = if above {
+            NSWindowOrderingMode::NSWindowAbove
+        } else {
+            NSWindowOrderingMode::NSWindowBelow
+        };
+        unsafe {
+            let _: () = msg_send![window, orderWindow: order
+                                   relativeTo: sibling_window.windowNumber()];
+        }
+        Ok(())
+    }
+
     fn is_active(&self) -> bool {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
