@@ -1084,34 +1084,104 @@ TYPES is a list of types that OBJECT can potentially belong to."
                  (cl--class-allparents (cl--find-class type)))
                found)))))
 
+(defun cl--derived-type-tagcode (obj &optional types &rest _)
+  (if (not types)
+      :need-specializers
+    `(nil ;; Extra bindings, if any.
+      . (cl--derived-type-specializers ,obj ,types))))
+
 (cl-generic-define-generalizer cl--derived-type-generalizer
-  ;; FIXME: This priority can't be always right.  :-(
-  ;; E.g. a method dispatching on a type like (or number function),
-  ;; should take precedence over a method on `t' but not over a method
-  ;; on `number'.  Similarly a method dispatching on a type like
-  ;; (satisfies (lambda (x) (equal x '(A . B)))) should take precedence
-  ;; over a method on (head 'A).
-  ;; Fixing this 100% is impossible so this generalizer is condemned to
-  ;; suffer from "undefined method ordering" problems, unless/until we
-  ;; restrict it somehow to a subset that we can handle reliably.
-  20 ;; "typeof" < "derived-types" < "head" priority
-  (lambda (obj &optional types &rest _)
-    (if (not types)
-        :need-specializers
-      `(nil ;; Extra bindings, if any.
-        . (cl--derived-type-specializers ,obj ,types))))
+  ;; Order ordinary derived types between `typeof' and `head'.  Combinations
+  ;; with other generalizers are checked below before the method is added.
+  20 #'cl--derived-type-tagcode
   (lambda (tag &rest _) (if (consp tag) tag)))
+
+(cl-generic-define-generalizer cl--derived-type-or-generalizer
+  ;; A union is less specific than each of its class-based members, but still
+  ;; more specific than the catch-all `t' generalizer.
+  5 #'cl--derived-type-tagcode
+  (lambda (tag &rest _) (if (consp tag) tag)))
+
+(defun cl--derived-type-simple-union-p (type-spec)
+  "Return non-nil if TYPE-SPEC is a union of types with stable `typeof' tags."
+  (and (eq (car-safe type-spec) 'or)
+       (cdr type-spec)
+       (cl-every
+        (lambda (type)
+          (or (eq type t)
+              (and (symbolp type)
+                   (let ((class (cl--find-class type)))
+                     (and class
+                          (memq (type-of class)
+                                '(built-in-class cl-structure-class
+                                  eieio--class))))))
+        (cdr type-spec))))
+
+(defun cl--derived-type-order-kind (generalizer)
+  (pcase (cl--generic-generalizer-name generalizer)
+    ('cl--derived-type-generalizer 'derived)
+    ('cl--derived-type-or-generalizer 'union)
+    ('cl--generic-typeof-generalizer 'typeof)
+    ('cl--generic-eql-generalizer 'eql)
+    ('cl--generic-t-generalizer 't)))
+
+(defun cl--derived-type-ambiguous-order-p (specializer other-specializer)
+  "Return non-nil when two SPECIALIZERs have an unsupported method order."
+  (let ((kinds (mapcar #'cl--derived-type-order-kind
+                       (cl-generic-generalizers specializer)))
+        (other-kinds (mapcar #'cl--derived-type-order-kind
+                             (cl-generic-generalizers other-specializer))))
+    (and (or (memq 'derived kinds) (memq 'union kinds)
+             (memq 'derived other-kinds) (memq 'union other-kinds))
+         (not (or (equal specializer other-specializer)
+                  ;; Exact values and the catch-all have a defined order.
+                  (and (or (memq 'derived kinds) (memq 'union kinds))
+                       (or (memq 't other-kinds) (memq 'eql other-kinds)))
+                  (and (or (memq 'derived other-kinds)
+                           (memq 'union other-kinds))
+                       (or (memq 't kinds) (memq 'eql kinds)))
+                  ;; A class-based union is below every matching `typeof'
+                  ;; specializer, as its members are narrower than the union.
+                  (and (memq 'union kinds) (memq 'typeof other-kinds))
+                  (and (memq 'union other-kinds) (memq 'typeof kinds)))))))
+
+(defun cl--derived-type-check-method-order
+    (orig name qualifiers args call-con function)
+  "Reject methods whose derived type specializers have no known order."
+  (let* ((generic (cl-generic-ensure-function name))
+         (spec-args (car (cl--generic-split-args args)))
+         (methods (cl--generic-method-table generic))
+         (index 0))
+    (dolist (spec-arg spec-args)
+      (let* ((contextp (eq '&context (car-safe (car spec-arg))))
+             (key (if contextp (car spec-arg) index))
+             (specializer (cdr spec-arg)))
+        (dolist (method methods)
+          (let ((other-specializer
+                 (cl--generic-arg-specializer method key)))
+            (when (cl--derived-type-ambiguous-order-p
+                   specializer other-specializer)
+              (error "Undefined method order between %S and %S"
+                     specializer other-specializer))))
+        (setq index (1+ index)))))
+  (funcall orig name qualifiers args call-con function))
+
+(advice-add 'cl-generic-define-method :around
+            #'cl--derived-type-check-method-order)
 
 ;;;###autoload
 (defun cl--derived-type-generalizers (type)
   ;; Make sure this derived type can be used without arguments.
-  (funcall (or (get type 'cl-deftype-handler)
-               (error "Type %S lacks cl-deftype-handler" type)))
-  ;; Check that we have a precomputed predicate since that's what
-  ;; `cl--derived-type-specializers' uses.
-  (or (get type 'cl-deftype-satisfies)
-      (error "Type %S lacks cl-deftype-satisfies" type))
-  (list cl--derived-type-generalizer))
+  (let ((type-spec
+         (funcall (or (get type 'cl-deftype-handler)
+                      (error "Type %S lacks cl-deftype-handler" type)))))
+    ;; Check that we have a precomputed predicate since that's what
+    ;; `cl--derived-type-specializers' uses.
+    (or (get type 'cl-deftype-satisfies)
+        (error "Type %S lacks cl-deftype-satisfies" type))
+    (list (if (cl--derived-type-simple-union-p type-spec)
+              cl--derived-type-or-generalizer
+            cl--derived-type-generalizer))))
 
 ;;;; Trailer
 
