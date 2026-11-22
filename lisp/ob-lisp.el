@@ -131,9 +131,26 @@ a property list containing the parameters of the block."
 			  (cdr (assq :rownames params))))))
 
 (defun org-babel-lisp-vector-to-list (results)
-  "Convert #(...) values in RESULTS string into a (...) list."
-  ;; TODO: better would be to replace #(...) with [...]
-  (replace-regexp-in-string "#(" "(" results))
+  "Convert Common Lisp #(...) vectors in RESULTS to Emacs Lisp vectors."
+  (let ((syntax-table (copy-syntax-table (standard-syntax-table))))
+    ;; Common Lisp's vertical bars quote symbol names, like strings do here.
+    (modify-syntax-entry ?| "\"" syntax-table)
+    (with-temp-buffer
+      (set-syntax-table syntax-table)
+      (insert results)
+      (goto-char (point-min))
+      (while (search-forward "#(" nil t)
+        (let* ((start (match-beginning 0))
+               (state (syntax-ppss start)))
+          (unless (or (nth 3 state) (nth 4 state))
+            (let ((end (scan-sexps (1+ start) 1)))
+              (when end
+                (let ((contents
+                       (buffer-substring-no-properties (+ start 2) (1- end))))
+                  (delete-region start end)
+                  (goto-char start)
+                  (insert "[" (org-babel-lisp-vector-to-list contents) "]")))))))
+      (buffer-string))))
 
 (provide 'ob-lisp)
 
