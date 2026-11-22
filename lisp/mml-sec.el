@@ -827,18 +827,14 @@ Select preferred one(s).  "
   "In CONTEXT for NAME let user select among KEYS for USAGE, showing MESSAGE.
 Return selected keys."
   (let* ((selected (epa--select-keys message keys))
-	 (selno (length selected))
-	 ;; TODO: y-or-n-p does not always resize the echo area but may
-	 ;; truncate the message.  Why?  The following does not help.
-	 ;; yes-or-no-p shows full message, though.
-	 (message-truncate-lines nil))
+	 (selno (length selected)))
     (if selected
-	(if (y-or-n-p
+	(if (yes-or-no-p
 	     (format "%d %s key(s) selected.  Store for %s? "
 		     selno usage name))
 	    (mml-secure-cust-record-keys context usage name selected 'save)
 	  selected)
-      (unless (y-or-n-p
+      (unless (yes-or-no-p
 	       (format "No %s key for %s; skip it? " usage name))
 	(error "No %s key for %s" usage name)))))
 
