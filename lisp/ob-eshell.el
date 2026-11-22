@@ -60,14 +60,15 @@ The PARAMS argument is passed to
     (if session
 	(progn
 	  (with-current-buffer session
-	    (dolist (line (split-string full-body "\n"))
-	      (goto-char eshell-last-output-end)
-	      (insert line)
-	      (eshell-send-input))
-	    ;; get output of last input
-	    ;; TODO: collect all output instead of last command's output.
-	    (goto-char eshell-last-input-end)
-	    (buffer-substring-no-properties (point) eshell-last-output-start)))
+            (let (outputs)
+              (dolist (line (split-string full-body "\n"))
+                (goto-char eshell-last-output-end)
+                (insert line)
+                (eshell-send-input)
+                (push (buffer-substring-no-properties
+                       eshell-last-input-end eshell-last-output-start)
+                      outputs))
+              (apply #'concat (nreverse outputs)))))
       (with-temp-buffer
 	(eshell-command full-body t)
 	(buffer-string)))))
