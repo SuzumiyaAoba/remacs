@@ -1016,8 +1016,10 @@ state."
           ((string-match "Unknown" status)			'unregistered)
 	  (t 'edited))))))))
 
-(defun vc-cvs-after-dir-status (update-function)
-  (let ((result nil)
+(defun vc-cvs-after-dir-status (dir update-function)
+  (let* ((root (file-name-as-directory (expand-file-name dir)))
+         (current-directory root)
+         (result nil)
         (translation '((?? . unregistered)
                        (?A . added)
                        (?C . conflict)
@@ -1027,23 +1029,37 @@ state."
                        (?U . needs-update))))
     (goto-char (point-min))
     (while (not (eobp))
-      (if (looking-at "^[ACMPRU?] \\(.*\\)$")
-          (push (list (match-string 1)
-                      (cdr (assoc (char-after) translation)))
-                result)
-        (cond
-         ((looking-at "cvs update: warning: .* was lost")
-          ;; Format is:
-          ;; cvs update: warning: FILENAME was lost
-          ;; U FILENAME
-          ;; with FILENAME in the first line possibly enclosed in
-          ;; quotes (since CVS 1.12.3).  To avoid problems, use the U
-          ;; line where name is never quoted.
-          (forward-line 1)
-          (when (looking-at "^U \\(.*\\)$")
-            (push (list (match-string 1) 'missing) result)))
-         ((looking-at "cvs update: New directory `\\(.*\\)' -- ignored")
-          (push (list (match-string 1) 'unregistered) result))))
+      (cond
+       ((looking-at "^cvs update: Updating \\(.*\\)$")
+        (setq current-directory
+              (file-name-as-directory
+               (expand-file-name (match-string 1) root))))
+       ((looking-at "^[ACMPRU?] \\(.*\\)$")
+        (push (list (file-relative-name
+                     (expand-file-name (match-string 1) current-directory)
+                     root)
+                    (cdr (assoc (char-after) translation)))
+              result))
+       ((looking-at "cvs update: warning: .* was lost")
+        ;; Format is:
+        ;; cvs update: warning: FILENAME was lost
+        ;; U FILENAME
+        ;; with FILENAME in the first line possibly enclosed in
+        ;; quotes (since CVS 1.12.3).  To avoid problems, use the U
+        ;; line where name is never quoted.
+        (forward-line 1)
+        (when (looking-at "^U \\(.*\\)$")
+          (push (list (file-relative-name
+                       (expand-file-name (match-string 1) current-directory)
+                       root)
+                      'missing)
+                result)))
+       ((looking-at "cvs update: New directory `\\(.*\\)' -- ignored")
+        (push (list (file-relative-name
+                     (expand-file-name (match-string 1) current-directory)
+                     root)
+                    'unregistered)
+              result)))
       (forward-line 1))
     (funcall update-function result)))
 
@@ -1088,7 +1104,7 @@ Query all files in DIR if files is nil."
                     "-f" "-n" "-q" "update")
     ;; FIXME: Consider `vc-run-delayed-success'.
     (vc-run-delayed
-      (vc-cvs-after-dir-status update-function))))
+      (vc-cvs-after-dir-status dir update-function))))
 
 (defun vc-cvs-file-to-string (file)
   "Read the content of FILE and return it as a string."
