@@ -1249,6 +1249,7 @@ If toggling on, also insert its message into the buffer."
 It is based on `log-edit-mode', and has Hg-specific extensions.")
 
 (autoload 'vc-wait-for-process-before-save "vc-dispatcher")
+(autoload 'vc-resynch-buffer "vc-dispatcher")
 
 (defalias 'vc-hg-async-checkins #'always)
 
@@ -1342,10 +1343,29 @@ It is an error to supply both or neither."
         (apply #'vc-hg-command nil 0 files args)
         (funcall post)))))
 
+(defun vc-hg--histedit-state-file (&optional file)
+  (let ((root (vc-hg-root (or file default-directory))))
+    (and root (expand-file-name ".hg/histedit-state" root))))
+
+(defun vc-hg--histedit-in-progress-p (&optional file)
+  (let ((state-file (vc-hg--histedit-state-file file)))
+    (and state-file (file-exists-p state-file))))
+
+(defun vc-hg--continue-histedit (file)
+  (let ((default-directory (vc-hg-root (or file default-directory))))
+    (unless (zerop
+             (vc-hg-command nil 1 nil
+                            "--config=extensions.histedit="
+                            "histedit" "--continue"))
+      (user-error "Mercurial histedit is still paused; resolve conflicts and use %s to continue"
+                  (substitute-command-keys "\\[vc-next-action]")))))
+
 (defun vc-hg-checkin (files comment &optional _rev)
   "Hg-specific version of `vc-BACKEND-checkin'.
 REV is ignored."
-  (vc-hg--checkin comment files nil))
+  (if (vc-hg--histedit-in-progress-p (car files))
+      (vc-hg--continue-histedit (car files))
+    (vc-hg--checkin comment files nil)))
 
 (defun vc-hg-checkin-patch (patch-string comment)
   "Hg-specific version of `vc-BACKEND-checkin-patch'."
@@ -1405,6 +1425,7 @@ REV is the revision to check out into WORKFILE."
     (goto-char (point-min))
     (unless (re-search-forward "^<<<<<<< " nil t)
       (vc-hg-command nil 0 buffer-file-name "resolve" "-m")
+      (vc-resynch-buffer buffer-file-name t t)
       ;; Remove the hook so that it is not called multiple times.
       (remove-hook 'after-save-hook #'vc-hg-resolve-when-done t))))
 
@@ -1926,15 +1947,14 @@ Always has to fetch, like `vc-hg-incoming-revision' does."
 
                     "histedit"
                     (format "--rev=%s" rev) "--commands" commands))
-            ;; FIXME: Ideally we would leave some sort of conflict for
-            ;; the user to resolve, instead of just giving up.
-            ;; We would want C-x v v to do 'hg histedit --continue' like
-            ;; how it can currently be used to conclude a merge after
-            ;; resolving conflicts.
-            (vc-hg-command nil 0 nil "--config=extensions.histedit="
-                           "histedit" "--abort")
-            (error "Merge conflicts while trying to delete %s; aborting"
-                   rev)))
+            (if (vc-hg--histedit-in-progress-p repo)
+                (user-error
+                 "Mercurial histedit paused on conflicts; resolve them and use %s to continue"
+                 (substitute-command-keys "\\[vc-next-action]"))
+              (vc-hg-command nil 0 nil "--config=extensions.histedit="
+                             "histedit" "--abort")
+              (error "hg histedit failed while trying to delete %s; aborted"
+                     rev)))
       (delete-file commands))))
 
 (defun vc-hg--assert-rev-on-current-branch (rev)
