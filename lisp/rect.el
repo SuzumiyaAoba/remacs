@@ -544,9 +544,11 @@ With a prefix (or a FILL) argument, also fill too short lines."
                     (end (point))
                     (ol (make-overlay start end)))
                (push ol (nthcdr 3 rectangle--string-preview-state))
-               ;; FIXME: The extra spacing doesn't interact correctly with
-               ;; the extra spacing added by the rectangular-region-highlight.
-               (when (< sc startcol)
+               ;; Rectangle mark mode already supplies the virtual-column
+               ;; spacing through its region overlay.
+               (when (and (< sc startcol)
+                          (or (not rectangle-mark-mode)
+                              rectangle--inhibit-region-highlight))
                  (overlay-put ol 'before-string (rectangle--space-to startcol)))
                (let ((as (when (< endcol ec)
                            ;; (rectangle--space-to ec)
@@ -577,16 +579,11 @@ Called from a program, takes three args; START, END and STRING."
   (interactive
    (progn
      (make-local-variable 'rectangle--string-preview-state)
-     (make-local-variable 'rectangle--inhibit-region-highlight)
      (let* ((buf (current-buffer))
             (win (if (eq (window-buffer) buf) (selected-window)))
             (start (region-beginning))
             (end (region-end))
-            (rectangle--string-preview-state `(nil ,start ,end))
-            ;; Rectangle-region-highlighting doesn't work well in the presence
-            ;; of the preview overlays.  We could work harder to try and make
-            ;; it work better, but it's easier to just disable it temporarily.
-            (rectangle--inhibit-region-highlight t))
+            (rectangle--string-preview-state `(nil ,start ,end)))
        (barf-if-buffer-read-only)
        (list start end
              (minibuffer-with-setup-hook
@@ -930,8 +927,7 @@ Ignores `line-move-visual'."
   (cond
    ((not rectangle-mark-mode)
     (funcall orig start end window rol))
-   ((or rectangle--inhibit-region-highlight
-        rectangle--string-preview-state)
+   (rectangle--inhibit-region-highlight
     (funcall redisplay-unhighlight-region-function rol)
     nil)
    ((and (eq 'rectangle (car-safe rol))
