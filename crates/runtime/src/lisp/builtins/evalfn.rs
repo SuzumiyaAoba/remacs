@@ -2074,6 +2074,17 @@ fn macroexpand_all_expanded(
                             body_and_handlers,
                         );
                     }
+                    sym::WHILE if items.len() == 1 => {
+                        let quote = Value::Sym(sym::QUOTE);
+                        let signal = Value::Sym(i.q("signal"));
+                        let error = Value::Sym(i.q("wrong-number-of-arguments"));
+                        let data = Value::list(vec![Value::Sym(sym::WHILE), Value::Int(0)]);
+                        return Ok(Value::list(vec![
+                            signal,
+                            Value::list(vec![quote.clone(), error]),
+                            Value::list(vec![quote, data]),
+                        ]));
+                    }
                     sym::UNWIND_PROTECT => {
                         if items.len() == 1 {
                             return Ok(Value::Nil);
