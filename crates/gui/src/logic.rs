@@ -588,6 +588,7 @@ pub(super) struct FrameSnapshot {
     pub user_position: bool,
     pub user_size: bool,
     pub override_redirect: bool,
+    pub keep_ratio: bool,
     pub undecorated: bool,
     pub ns_transparent_titlebar: bool,
     pub ns_appearance: Option<gpui::WindowAppearance>,
@@ -662,6 +663,10 @@ fn frame_snapshot(
         user_position: frame_parameter_value(i, frame, "user-position").truthy(),
         user_size: frame_parameter_value(i, frame, "user-size").truthy(),
         override_redirect: frame_parameter_value(i, frame, "override-redirect").truthy(),
+        keep_ratio: matches!(
+            frame_parameter_value(i, frame, "keep-ratio"),
+            Value::Sym(symbol) if i.symbol_name(symbol) == "t"
+        ),
         undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
         ns_transparent_titlebar: frame_parameter_value(i, frame, "ns-transparent-titlebar")
             .truthy(),

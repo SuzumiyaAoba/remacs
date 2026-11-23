@@ -82,6 +82,7 @@ fn native_frame_options_keep_the_viewport_at_least_three_rows_high() {
         user_position: false,
         user_size: false,
         override_redirect: false,
+        keep_ratio: false,
         undecorated: false,
         ns_transparent_titlebar: false,
         ns_appearance: None,

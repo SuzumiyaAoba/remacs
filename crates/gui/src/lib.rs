@@ -716,6 +716,7 @@ pub fn run_gui_with_dump(
         cx.spawn(async move |cx| {
             let mut windows = HashMap::<usize, WindowHandle<EditorView>>::new();
             let mut frame_parents = HashMap::<usize, Option<usize>>::new();
+            let mut frame_keep_ratios = HashMap::<usize, ChildFrameKeepRatioState>::new();
             let mut window_modes = HashMap::<usize, Option<String>>::new();
             let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
             let mut frame_focus_on_map = HashMap::<usize, bool>::new();
@@ -742,6 +743,7 @@ pub fn run_gui_with_dump(
                         pending_frame_visibilities
                             .retain(|frame_id, _| live_frames.contains(frame_id));
                         pending_frame_orders.retain(|frame_id, _| live_frames.contains(frame_id));
+                        frame_keep_ratios.retain(|frame_id, _| live_frames.contains(frame_id));
                         let snapshots = frame_snapshots_parent_first(snapshots);
                         let mut native_window_changed = HashSet::new();
                         for mut snapshot in snapshots {
@@ -814,6 +816,9 @@ pub fn run_gui_with_dump(
                                 .is_some_and(|parent| native_window_changed.contains(&parent));
                             let parent_changed =
                                 frame_parents.get(&frame_id) != Some(&snapshot.parent_frame);
+                            if parent_changed || parent_window_changed || !snapshot.keep_ratio {
+                                frame_keep_ratios.remove(&frame_id);
+                            }
                             if windows.contains_key(&frame_id)
                                 && (parent_changed || parent_window_changed)
                             {
@@ -829,6 +834,27 @@ pub fn run_gui_with_dump(
                                     window_modes.get(&frame_id) != Some(&fullscreen);
                                 let requested_fullscreen = fullscreen.clone();
                                 let requested_parent_bounds = parent_bounds;
+                                let keep_ratio_parameters =
+                                    FrameGeometryParameters::from_snapshot(&snapshot);
+                                let mut ratio_state = snapshot
+                                    .keep_ratio
+                                    .then(|| frame_keep_ratios.get(&frame_id).copied())
+                                    .flatten();
+                                if let Some(mut state) = ratio_state {
+                                    if state.parameters != keep_ratio_parameters {
+                                        if state.ignore_parameter_feedback {
+                                            state.parameters = keep_ratio_parameters;
+                                            state.ignore_parameter_feedback = false;
+                                            ratio_state = Some(state);
+                                        } else {
+                                            ratio_state = None;
+                                        }
+                                    }
+                                }
+                                let parent_ratio_changed = ratio_state.is_some_and(|state| {
+                                    requested_parent_bounds
+                                        .is_some_and(|parent| parent != state.parent_bounds)
+                                });
                                 let update_behavior =
                                     frame_behaviors.get(&frame_id) != Some(&behavior);
                                 let update_background =
@@ -842,7 +868,7 @@ pub fn run_gui_with_dump(
                                         != Some(&represented_file);
                                 let requested_behavior = behavior.clone();
                                 let requested_represented_file = represented_file.clone();
-                                let _ = handle.update(cx, move |view, window, cx| {
+                                let child_bounds = handle.update(cx, move |view, window, cx| {
                                     view.set_image_cache_metrics(
                                         image_cache_entries,
                                         image_cache_size,
@@ -905,19 +931,30 @@ pub fn run_gui_with_dump(
                                         );
                                     }
                                     if requested_fullscreen.is_none() {
-                                        apply_frame_snapshot_bounds(
-                                            view,
-                                            window,
-                                            cx,
-                                            frame_size.0,
-                                            frame_size.1,
-                                            frame_width_size,
-                                            frame_height_size,
-                                            internal_border_width,
-                                            frame_left,
-                                            frame_top,
-                                            requested_parent_bounds,
-                                        );
+                                        if let (Some(state), Some(parent_bounds)) =
+                                            (ratio_state, requested_parent_bounds)
+                                        {
+                                            apply_child_frame_ratio_bounds(
+                                                window,
+                                                cx,
+                                                parent_bounds,
+                                                state.ratio,
+                                            );
+                                        } else {
+                                            apply_frame_snapshot_bounds(
+                                                view,
+                                                window,
+                                                cx,
+                                                frame_size.0,
+                                                frame_size.1,
+                                                frame_width_size,
+                                                frame_height_size,
+                                                internal_border_width,
+                                                frame_left,
+                                                frame_top,
+                                                requested_parent_bounds,
+                                            );
+                                        }
                                     }
                                     if update_window_mode {
                                         apply_frame_window_state(
@@ -940,7 +977,33 @@ pub fn run_gui_with_dump(
                                     if update_visibility {
                                         apply_frame_visibility(window, visibility, focus_on_map);
                                     }
+                                    window.bounds()
                                 });
+                                if snapshot.keep_ratio {
+                                    if let Some(parent_bounds) = requested_parent_bounds {
+                                        let state = ratio_state.map(|mut state| {
+                                            state.parameters = keep_ratio_parameters;
+                                            state.parent_bounds = parent_bounds;
+                                            state.ignore_parameter_feedback = parent_ratio_changed;
+                                            state
+                                        });
+                                        let state = state.or_else(|| {
+                                            child_bounds.ok().and_then(|child_bounds| {
+                                                child_frame_ratio(child_bounds, parent_bounds).map(
+                                                    |ratio| ChildFrameKeepRatioState {
+                                                        parameters: keep_ratio_parameters,
+                                                        ratio,
+                                                        parent_bounds,
+                                                        ignore_parameter_feedback: false,
+                                                    },
+                                                )
+                                            })
+                                        });
+                                        if let Some(state) = state {
+                                            frame_keep_ratios.insert(frame_id, state);
+                                        }
+                                    }
+                                }
                                 window_modes.insert(frame_id, fullscreen);
                                 frame_behaviors.insert(frame_id, behavior);
                                 window_backgrounds.insert(frame_id, background_appearance);
@@ -1133,7 +1196,7 @@ pub fn run_gui_with_dump(
                             window_titlebars.insert(frame_id, titlebar_appearance);
                             window_appearances.insert(frame_id, ns_appearance);
                             window_represented_files.insert(frame_id, represented_file);
-                            let _ = handle.update(cx, move |view, window, _cx| {
+                            let child_bounds = handle.update(cx, move |view, window, _cx| {
                                 view.set_frame_behavior(behavior.0, behavior.1);
                                 set_frame_z_group_window(
                                     window,
@@ -1141,6 +1204,7 @@ pub fn run_gui_with_dump(
                                     behavior.3,
                                 );
                                 apply_initial_frame_visibility(window, visibility, focus_on_map);
+                                window.bounds()
                             });
                             apply_pending_frame_order(
                                 frame_id,
@@ -1152,6 +1216,21 @@ pub fn run_gui_with_dump(
                             native_visibility.insert(frame_id, visibility);
                             windows.insert(frame_id, handle);
                             frame_parents.insert(frame_id, snapshot.parent_frame);
+                            if snapshot.keep_ratio
+                                && let (Some(parent_bounds), Ok(child_bounds)) =
+                                    (parent_bounds, child_bounds)
+                                && let Some(ratio) = child_frame_ratio(child_bounds, parent_bounds)
+                            {
+                                frame_keep_ratios.insert(
+                                    frame_id,
+                                    ChildFrameKeepRatioState {
+                                        parameters: FrameGeometryParameters::from_snapshot(&snapshot),
+                                        ratio,
+                                        parent_bounds,
+                                        ignore_parameter_feedback: false,
+                                    },
+                                );
+                            }
                             native_window_changed.insert(frame_id);
                         }
                         let removed: Vec<_> = windows
@@ -1169,6 +1248,7 @@ pub fn run_gui_with_dump(
                             }
                             window_modes.remove(&frame_id);
                             frame_parents.remove(&frame_id);
+                            frame_keep_ratios.remove(&frame_id);
                             frame_behaviors.remove(&frame_id);
                             frame_focus_on_map.remove(&frame_id);
                             frame_skip_taskbar.remove(&frame_id);
@@ -2232,6 +2312,103 @@ fn frame_background_appearance(frame: &FrameSnapshot) -> WindowBackgroundAppeara
 
 fn frame_opacity(alpha_active: u8, alpha_inactive: u8, active: bool) -> f32 {
     f32::from(if active { alpha_active } else { alpha_inactive }) / 100.0
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FrameGeometryParameters {
+    width: usize,
+    height: usize,
+    width_size: Option<FrameSizeSpec>,
+    height_size: Option<FrameSizeSpec>,
+    left: Option<FramePosition>,
+    top: Option<FramePosition>,
+}
+
+impl FrameGeometryParameters {
+    fn from_snapshot(frame: &FrameSnapshot) -> Self {
+        Self {
+            width: frame.width,
+            height: frame.height,
+            width_size: frame.width_size,
+            height_size: frame.height_size,
+            left: frame.left,
+            top: frame.top,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ChildFrameRatio {
+    left: f32,
+    top: f32,
+    width: f32,
+    height: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ChildFrameKeepRatioState {
+    parameters: FrameGeometryParameters,
+    ratio: ChildFrameRatio,
+    parent_bounds: Bounds<Pixels>,
+    ignore_parameter_feedback: bool,
+}
+
+fn child_frame_ratio(
+    child_bounds: Bounds<Pixels>,
+    parent_bounds: Bounds<Pixels>,
+) -> Option<ChildFrameRatio> {
+    let parent_width = f32::from(parent_bounds.size.width);
+    let parent_height = f32::from(parent_bounds.size.height);
+    (parent_width > 0.0 && parent_height > 0.0).then(|| ChildFrameRatio {
+        left: f32::from(child_bounds.origin.x - parent_bounds.origin.x) / parent_width,
+        top: f32::from(child_bounds.origin.y - parent_bounds.origin.y) / parent_height,
+        width: f32::from(child_bounds.size.width) / parent_width,
+        height: f32::from(child_bounds.size.height) / parent_height,
+    })
+}
+
+fn child_frame_bounds_for_ratio(
+    parent_bounds: Bounds<Pixels>,
+    ratio: ChildFrameRatio,
+) -> Bounds<Pixels> {
+    Bounds::new(
+        point(
+            parent_bounds.origin.x + parent_bounds.size.width * ratio.left,
+            parent_bounds.origin.y + parent_bounds.size.height * ratio.top,
+        ),
+        size(
+            parent_bounds.size.width * ratio.width,
+            parent_bounds.size.height * ratio.height,
+        ),
+    )
+}
+
+fn apply_child_frame_ratio_bounds(
+    window: &mut Window,
+    cx: &mut Context<EditorView>,
+    parent_bounds: Bounds<Pixels>,
+    ratio: ChildFrameRatio,
+) {
+    let desired_bounds = child_frame_bounds_for_ratio(parent_bounds, ratio);
+    let current_bounds = window.bounds();
+    let viewport = window.viewport_size();
+    let horizontal_chrome =
+        (f32::from(current_bounds.size.width) - f32::from(viewport.width)).max(0.0);
+    let vertical_chrome =
+        (f32::from(current_bounds.size.height) - f32::from(viewport.height)).max(0.0);
+    let desired_viewport = size(
+        px((f32::from(desired_bounds.size.width) - horizontal_chrome).max(1.0)),
+        px((f32::from(desired_bounds.size.height) - vertical_chrome).max(1.0)),
+    );
+    if (f32::from(viewport.width) - f32::from(desired_viewport.width)).abs() >= 1.0
+        || (f32::from(viewport.height) - f32::from(desired_viewport.height)).abs() >= 1.0
+    {
+        window.resize(desired_viewport);
+    }
+    if current_bounds.origin != desired_bounds.origin {
+        let display_id = window.display(cx).map(|display| u32::from(display.id()));
+        window.set_position(desired_bounds.origin, display_id);
+    }
 }
 
 #[cfg(any(not(target_os = "macos"), test))]
