@@ -1685,6 +1685,31 @@ fn macroexpand_all_expanded(
             // is only discarded here, which also pollutes the
             // REMACS_BT_ERR log.)
             let Some(items) = macroexpand_list_to_vec(i, &expanded)? else {
+                if let Value::Cons(function_cell) = &car {
+                    let is_lambda = i.sym_is(
+                        &crate::lisp::eval::cons_parts(i, function_cell)?.0,
+                        sym::LAMBDA,
+                    );
+                    if is_lambda {
+                        if let Some(lambda_items) = macroexpand_list_to_vec(i, &car)? {
+                            if lambda_items.len() >= 2 {
+                                let mut function = lambda_items[..2].to_vec();
+                                for form in &lambda_items[2..] {
+                                    function.push(macroexpand_all_recur(i, form)?);
+                                }
+                                let function = Value::list(function);
+                                let arguments =
+                                    macroexpand_live_spine(i, &cdr, macroexpand_all_recur)?;
+                                return macroexpand_prepend_preserving(
+                                    i,
+                                    &expanded,
+                                    vec![function],
+                                    arguments,
+                                );
+                            }
+                        }
+                    }
+                }
                 if i.sym_is(&car, sym::SETQ) {
                     let mut tail = cdr;
                     let mut seen = FxHashSet::default();
