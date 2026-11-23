@@ -105,6 +105,8 @@ pub(crate) struct BcProg {
     /// `parse_argdesc' results.
     req: usize,
     max: usize,
+    /// A negative packed maximum is not a usable execution arity in GNU.
+    uncallable: bool,
     has_rest: bool,
     /// The raw upper argument-count field used in GNU's WNA error data.
     /// For packed descriptors this is signed `argdesc >> 8', so an
@@ -122,6 +124,8 @@ pub(crate) struct BcProg {
 pub(crate) struct ParsedArgDesc {
     pub req: usize,
     pub max: usize,
+    /// True when a packed descriptor's signed upper field is negative.
+    pub uncallable: bool,
     /// Upper bound as GNU reports it, before converting the packed signed
     /// field to the nonnegative execution/storage limit.
     pub reported_max: i128,
@@ -167,7 +171,7 @@ pub(crate) fn check_argdesc(
         return Ok(());
     };
     let parsed = parse_argdesc(i, &argdesc);
-    if n < parsed.req {
+    if n < parsed.req || parsed.uncallable {
         return Err(i.wrong_number_of_args(who, n as i128));
     }
     if parsed.invalid_at.is_some_and(|invalid_at| n >= invalid_at) {
@@ -257,6 +261,7 @@ pub(crate) fn exec(
                 code,
                 req: parsed_argdesc.req,
                 max: parsed_argdesc.max,
+                uncallable: parsed_argdesc.uncallable,
                 has_rest: parsed_argdesc.has_rest,
                 wna_max,
                 dyn_names: parsed_argdesc.dyn_names.map(Rc::new),
@@ -310,6 +315,7 @@ pub(crate) fn exec_raw(
         code,
         req: argdesc.req,
         max: argdesc.max,
+        uncallable: argdesc.uncallable,
         has_rest: argdesc.has_rest,
         wna_max: 0,
         dyn_names: argdesc.dyn_names.map(Rc::new),
@@ -335,9 +341,10 @@ fn run(
     if stack_depth > MAX_BYTECODE_STACK_SLOTS {
         return Err(i.error("Bytecode stack overflow"));
     }
-    let (req, max, has_rest, dyn_names, dyn_rest_index) = (
+    let (req, max, uncallable, has_rest, dyn_names, dyn_rest_index) = (
         prog.req,
         prog.max,
+        prog.uncallable,
         prog.has_rest,
         prog.dyn_names.as_deref(),
         prog.dyn_rest_index,
@@ -351,13 +358,19 @@ fn run(
     // funcall_subr passes all args to an aMANY trampoline).
     let short_argv: Vec<Value>;
     let argv =
-        if prog.invalid_argdesc_at.is_none() && named && !has_rest && max > 8 && argv.len() > max {
+        if prog.invalid_argdesc_at.is_none()
+            && !uncallable
+            && named
+            && !has_rest
+            && max > 8
+            && argv.len() > max
+        {
             short_argv = argv[..max].to_vec();
             &short_argv[..]
         } else {
             argv
         };
-    if argv.len() < req {
+    if argv.len() < req || uncallable {
         // When the caller has no function datum, GNU's compiled macro
         // expanders signal ((MIN . NONREST) NARGS). User-created byte-code
         // functions pass their function object through `who'.
@@ -695,18 +708,17 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
         Value::Int(n) => {
             let req = (*n & 0x7f).max(0) as usize;
             let rest = (*n >> 7) & 1 != 0;
-            // GNU uses the packed upper field as-is. An inconsistent
-            // descriptor with max < required remains uncallable rather
-            // than being normalized into a valid fixed-arity descriptor.
+            // Keep the signed upper field for introspection and error data.
+            // Its negative low bits are not a positive execution limit; an
+            // inconsistent descriptor remains uncallable instead of being
+            // normalized into a valid fixed-arity descriptor.
             let packed_max = *n >> 8;
-            let max = if packed_max < 0 {
-                (packed_max & 0x7f) as usize
-            } else {
-                packed_max as usize
-            };
+            let uncallable = packed_max < 0;
+            let max = if uncallable { 0 } else { packed_max as usize };
             ParsedArgDesc {
                 req,
                 max,
+                uncallable,
                 reported_max: packed_max,
                 has_rest: rest,
                 dyn_names: None,
@@ -717,6 +729,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
         Value::Nil => ParsedArgDesc {
             req: 0,
             max: 0,
+            uncallable: false,
             reported_max: 0,
             has_rest: false,
             dyn_names: Some(Vec::new()),
@@ -732,6 +745,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
                 return ParsedArgDesc {
                     req: usize::MAX,
                     max: 0,
+                    uncallable: false,
                     reported_max: 0,
                     has_rest: false,
                     dyn_names: Some(Vec::new()),
@@ -807,6 +821,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
             ParsedArgDesc {
                 req,
                 max,
+                uncallable: false,
                 reported_max: max as i128,
                 has_rest: rest_index.is_some(),
                 dyn_names: Some(names),
@@ -817,6 +832,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
         _ => ParsedArgDesc {
             req: 0,
             max: 0,
+            uncallable: false,
             reported_max: 0,
             has_rest: false,
             dyn_names: None,
