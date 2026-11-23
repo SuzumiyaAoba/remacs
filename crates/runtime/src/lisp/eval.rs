@@ -722,9 +722,6 @@ impl Interp {
                     _ => unreachable!(),
                 };
                 if self.sym_is(&b, sym::LAMBDA) {
-                    if let Some(tail) = &dotted_tail {
-                        return Err(self.wrong_type_mut("listp", tail));
-                    }
                     // Direct lambda calls capture the active interpreted
                     // lexical environment, like evaluating the lambda and
                     // then calling the resulting closure.  Keep the source
@@ -734,7 +731,15 @@ impl Interp {
                         _ => unreachable!(),
                     })?;
                     let function = self.function_from_lambda(&lambda_tail)?;
-                    let argv = self.eval_args_len(&args, spine_len)?;
+                    // Constructing a lambda can evaluate its `:documentation'
+                    // form. Re-read the original argument spine afterward;
+                    // that evaluation may repair a dotted tail.
+                    let (live_spine_len, live_dotted_tail) =
+                        argument_spine_shape(self, &args)?;
+                    if let Some(tail) = &live_dotted_tail {
+                        return Err(self.wrong_type_mut("listp", tail));
+                    }
+                    let argv = self.eval_args_len(&args, live_spine_len)?;
                     self.finish_pending_frame(frame);
                     return self.apply_resolved(&function, argv, head.clone());
                 }
@@ -747,7 +752,16 @@ impl Interp {
             _ => {
                 let site = (Rc::as_ptr(cons) as usize as u128) << 1;
                 let fun = self.eval_at_compiled_site(&head, site)?;
-                self.call_function_len(&fun, &args, None, spine_len, dotted_tail, frame, false)
+                let (live_spine_len, live_dotted_tail) = argument_spine_shape(self, &args)?;
+                self.call_function_len(
+                    &fun,
+                    &args,
+                    None,
+                    live_spine_len,
+                    live_dotted_tail,
+                    frame,
+                    false,
+                )
             }
         }
     }
