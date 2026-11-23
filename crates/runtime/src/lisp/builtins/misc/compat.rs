@@ -534,19 +534,66 @@ pub(super) fn f_current_bidi_paragraph_direction(
         return Ok(configured_direction);
     }
 
+    let case_fold_search =
+        crate::frontend::buffer_setting(i, "case-fold-search", buffer_id).truthy();
+    let start_re = match crate::frontend::buffer_setting(i, "bidi-paragraph-start-re", buffer_id) {
+        Value::Str(pattern) => Some(
+            crate::lisp::regexp::compile_case(&pattern.borrow(), case_fold_search)
+                .map_err(|error| err_sym(i, "invalid-regexp", vec![Value::string(error.0)]))?,
+        ),
+        _ => None,
+    };
+    let separate_re =
+        match crate::frontend::buffer_setting(i, "bidi-paragraph-separate-re", buffer_id) {
+            Value::Str(pattern) => Some(
+                crate::lisp::regexp::compile_case(&pattern.borrow(), case_fold_search)
+                    .map_err(|error| {
+                        err_sym(i, "invalid-regexp", vec![Value::string(error.0)])
+                    })?,
+            ),
+            _ => None,
+        };
+    let syntax = crate::editor::re_syntax(i);
+    let category = crate::editor::re_category(i);
     let paragraph_text = {
         let bb = buffer.borrow();
         let point = bb.point().clamp(bb.begv, bb.zv);
         let first_line = bb.text.line_of_pos(bb.begv);
         let last_line = bb.text.line_of_pos(bb.zv);
         let mut point_line = bb.text.line_of_pos(point);
-        let line_text = |line: usize| {
-            let start = bb.text.line_start(line).max(bb.begv);
-            let end = bb.text.line_end(start).min(bb.zv);
-            bb.text.substring(start, end).to_unicode_lossy()
-        };
+        let lines: Vec<String> = (first_line..=last_line)
+            .map(|line| {
+                let start = bb.text.line_start(line).max(bb.begv);
+                let end = bb.text.line_end(start).min(bb.zv);
+                bb.text.substring(start, end).to_unicode_lossy()
+            })
+            .collect();
+        let line_text = |line: usize| lines[line.saturating_sub(first_line)].as_str();
         let line_is_blank = |line: usize| line_text(line).chars().all(char::is_whitespace);
-        if line_is_blank(point_line) {
+        let regex_matches_line = |line: usize, regex: &crate::lisp::regexp::Regex| {
+            let chars: Vec<crate::lisp::value::EmacsChar> =
+                line_text(line).chars().map(Into::into).collect();
+            crate::lisp::regexp::match_at(
+                regex,
+                &chars,
+                0,
+                &syntax,
+                &category,
+                crate::lisp::regexp::NO_POINT,
+            )
+            .is_some()
+        };
+        let is_start_line = |line: usize| {
+            start_re
+                .as_ref()
+                .map_or_else(|| line_is_blank(line), |regex| regex_matches_line(line, regex))
+        };
+        let is_separate_line = |line: usize| {
+            separate_re
+                .as_ref()
+                .map_or_else(|| line_is_blank(line), |regex| regex_matches_line(line, regex))
+        };
+        if start_re.is_none() && separate_re.is_none() && line_is_blank(point_line) {
             let mut previous = point_line;
             while previous > first_line && line_is_blank(previous) {
                 previous -= 1;
@@ -558,13 +605,23 @@ pub(super) fn f_current_bidi_paragraph_direction(
             {
                 point_line = next;
             }
+        } else if is_separate_line(point_line) && !is_start_line(point_line) {
+            while point_line > first_line {
+                point_line -= 1;
+                if !is_separate_line(point_line) {
+                    break;
+                }
+            }
         }
         let mut start_line = point_line;
-        while start_line > first_line && !line_is_blank(start_line - 1) {
+        while start_line > first_line && !is_start_line(start_line) {
             start_line -= 1;
         }
         let mut end_line = point_line;
-        while end_line < last_line && !line_is_blank(end_line + 1) {
+        while end_line < last_line
+            && !is_start_line(end_line + 1)
+            && !is_separate_line(end_line + 1)
+        {
             end_line += 1;
         }
         let mut text = String::new();
