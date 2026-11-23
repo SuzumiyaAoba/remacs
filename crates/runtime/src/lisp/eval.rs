@@ -55,6 +55,19 @@ pub(crate) struct SitForOptions {
     pub redisplay: bool,
 }
 
+#[derive(Clone, Copy)]
+enum EvalArgsMode {
+    /// Lambda calls keep the initial argument count and read each next cdr
+    /// before evaluating the current form.
+    Lambda,
+    /// N-adic subrs also keep the initial count, but stop if the live spine
+    /// is no longer a cons.
+    NadicSubr,
+    /// Fixed-arity subrs read the current cell's cdr after evaluating its car,
+    /// up to the declared maximum argument count.
+    FixedSubr { max_args: usize },
+}
+
 // Keep existing eval::* paths usable by runtime code and external callers.
 pub use lexenv::{
     LexEnv, LexFrame, lexenv_as_value, lexenv_declare, lexenv_extend, lexenv_lookup, lexenv_root,
@@ -742,46 +755,97 @@ impl Interp {
     /// Evaluate each element of a list form, using PRE_LEN when the
     /// caller already counted the spine (eval_form's check walk).
     pub fn eval_args_len(&mut self, args: &Value, pre_len: i128) -> Result<Argv, Flow> {
+        self.eval_args_len_mode(args, pre_len, EvalArgsMode::Lambda)
+    }
+
+    fn eval_args_len_mode(
+        &mut self,
+        args: &Value,
+        pre_len: i128,
+        mode: EvalArgsMode,
+    ) -> Result<Argv, Flow> {
         const MAX_INITIAL_ARG_CAPACITY: usize = 4096;
         self.maybe_quit()?;
-        let cap = if pre_len >= 0 {
-            usize::try_from(pre_len).unwrap_or(MAX_INITIAL_ARG_CAPACITY)
+        let initial_count = if pre_len >= 0 {
+            usize::try_from(pre_len).map_err(|_| self.error("Too many arguments"))?
         } else {
-            usize::try_from(self.raw_list_length(args)?).unwrap_or(MAX_INITIAL_ARG_CAPACITY)
+            usize::try_from(self.checked_call_spine_length(args)?)
+                .map_err(|_| self.error("Too many arguments"))?
+        };
+        let capacity = match mode {
+            EvalArgsMode::FixedSubr { max_args } => max_args,
+            EvalArgsMode::Lambda | EvalArgsMode::NadicSubr => initial_count,
         }
         .min(MAX_INITIAL_ARG_CAPACITY);
-        // GNU eval_sub walks and saves the argument spine before evaluating
-        // the argument forms. Keep the cons cells so a later car mutation is
-        // visible when that argument is reached, while cdr mutations cannot
-        // insert, remove, or replace arguments in the active call.
-        let mut cells = Vec::with_capacity(cap);
-        let mut seen = FxHashSet::default();
+        let mut out = Vec::with_capacity(capacity);
         let mut cur = args.clone();
         let mut until_quit = 4096usize;
-        loop {
-            match cur {
-                Value::Nil => break,
-                Value::Cons(c) => {
-                    if !seen.insert(Rc::as_ptr(&c) as usize) {
-                        let repeated = Value::Cons(c);
-                        return Err(crate::lisp::builtins::listfn::err_circular(self, &repeated));
-                    }
-                    cur = cons_cdr(self, &c)?;
-                    cells.push(c);
+
+        match mode {
+            EvalArgsMode::Lambda => {
+                for _ in 0..initial_count {
+                    let (form, site, next) = match cur.clone() {
+                        Value::Nil => (Value::Nil, 0, Value::Nil),
+                        Value::Cons(cell) => {
+                            let form = cons_car(self, &cell)?;
+                            let next = cons_cdr(self, &cell)?;
+                            let site = (Rc::as_ptr(&cell) as usize as u128) << 1;
+                            (form, site, next)
+                        }
+                        other => return Err(self.wrong_type_mut("listp", &other)),
+                    };
+                    // Lambda calls save the cdr before evaluating each
+                    // argument while retaining the original argument count.
+                    cur = next;
+                    out.push(self.eval_at_compiled_site(&form, site)?);
                     until_quit -= 1;
                     if until_quit == 0 {
                         self.maybe_quit()?;
                         until_quit = 4096;
                     }
                 }
-                other => return Err(self.wrong_type_mut("listp", &other)),
             }
-        }
-        let mut out = Vec::with_capacity(cells.len());
-        for cell in cells {
-            let car = cons_car(self, &cell)?;
-            let site = (Rc::as_ptr(&cell) as usize as u128) << 1;
-            out.push(self.eval_at_compiled_site(&car, site)?);
+            EvalArgsMode::NadicSubr => {
+                for _ in 0..initial_count {
+                    let Value::Cons(cell) = cur.clone() else {
+                        break;
+                    };
+                    let form = cons_car(self, &cell)?;
+                    // GNU's n-adic subr path saves the next tail before
+                    // evaluating the current argument.
+                    cur = cons_cdr(self, &cell)?;
+                    let site = (Rc::as_ptr(&cell) as usize as u128) << 1;
+                    out.push(self.eval_at_compiled_site(&form, site)?);
+                    until_quit -= 1;
+                    if until_quit == 0 {
+                        self.maybe_quit()?;
+                        until_quit = 4096;
+                    }
+                }
+            }
+            EvalArgsMode::FixedSubr { max_args } => {
+                for _ in 0..max_args {
+                    match cur.clone() {
+                        // C fixed-arity subrs receive nil in omitted optional
+                        // slots; keep walking the remaining declared slots.
+                        Value::Nil => out.push(Value::Nil),
+                        Value::Cons(cell) => {
+                            let form = cons_car(self, &cell)?;
+                            let site = (Rc::as_ptr(&cell) as usize as u128) << 1;
+                            out.push(self.eval_at_compiled_site(&form, site)?);
+                            // Fixed-arity subrs read the next cdr after the
+                            // current argument has finished evaluating.
+                            cur = cons_cdr(self, &cell)?;
+                        }
+                        other => return Err(self.wrong_type_mut("listp", &other)),
+                    }
+                    until_quit -= 1;
+                    if until_quit == 0 {
+                        self.maybe_quit()?;
+                        until_quit = 4096;
+                    }
+                }
+            }
         }
         Ok(Argv::new(out))
     }
@@ -957,14 +1021,29 @@ impl Interp {
                         self.raw_list_length(args)?
                     };
                     self.check_arity_subr_n(s, n, sym_name.as_ref())?;
-                    let argv = self.eval_args_len(args, spine_len)?;
+                    let eval_mode = match s.arity {
+                        Arity::Range { max, .. } if max <= 8 => {
+                            EvalArgsMode::FixedSubr {
+                                max_args: max as usize,
+                            }
+                        }
+                        Arity::Range { .. } | Arity::Many { .. } => EvalArgsMode::NadicSubr,
+                        Arity::Unevalled => unreachable!(),
+                    };
+                    let argv = self.eval_args_len_mode(args, spine_len, eval_mode)?;
                     self.finish_pending_frame(frame);
                     // Record the frame like apply_resolved does — GNU's
                     // specpdl holds every call, so backtraces show the
                     // innermost subr (`car(5)') too.
                     let shown = sym_name.clone().unwrap_or_else(|| fun.clone());
                     self.profiler_checkpoint();
-                    self.lisp_stack.push((shown, argv.clone()));
+                    let trace_args = if matches!(eval_mode, EvalArgsMode::FixedSubr { .. }) {
+                        let count = usize::try_from(n).unwrap_or(0).min(argv.len());
+                        Argv::new(argv.as_slice()[..count].to_vec())
+                    } else {
+                        argv.clone()
+                    };
+                    self.lisp_stack.push((shown, trace_args));
                     let r = (s.func)(self, argv);
                     let r = self.offer_flow(r);
                     self.profiler_checkpoint();
