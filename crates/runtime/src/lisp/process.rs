@@ -3584,7 +3584,9 @@ fn f_process_tty_name(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
 fn f_process_coding_system(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     let p = want_proc(i, &a[0])?;
     let (d, e) = p.borrow().coding.clone();
-    Ok(Value::cons(symv(i, &d), symv(i, &e)))
+    let read = super::builtins::misc::coding_alias_symbol(i, &d);
+    let write = super::builtins::misc::coding_alias_symbol(i, &e);
+    Ok(Value::cons(read, write))
 }
 
 fn f_set_process_coding_system(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
