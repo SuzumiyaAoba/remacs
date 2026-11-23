@@ -1465,6 +1465,28 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
     // GNU `macroexp--expand-all' passes `macroexpand-all-environment'
     // (bound by `macroexpand-all') to `macroexpand' explicitly.
     let env_id = i.q("macroexpand-all-environment");
+    let mut form = form.clone();
+    let backquote_list_star = i.q("backquote-list*");
+    let is_backquote_list_star = match &form {
+        Value::Cons(cell) => {
+            let head = crate::lisp::eval::cons_parts(i, cell)?.0;
+            i.sym_id(&head) == Some(backquote_list_star)
+        }
+        _ => false,
+    };
+    if is_backquote_list_star {
+        // GNU processes this macro in reverse: recursively expand its
+        // arguments first, then macroexpand the outer form. Keep the
+        // argument spine live so an earlier argument macro can replace a
+        // later cell before it is read.
+        let args = macroexpand_list_tail(i, &form, 1)?;
+        let args = macroexpand_live_spine(i, &args, macroexpand_all_recur)?;
+        let head = match &form {
+            Value::Cons(cell) => crate::lisp::eval::cons_parts(i, cell)?.0,
+            _ => unreachable!(),
+        };
+        form = macroexpand_prepend_preserving(i, &form, vec![head], args)?;
+    }
     let env = i.symbol_value(env_id);
     // `cl-symbol-macrolet' works by advising `macroexpand'/
     // `macroexpand-1' (`cl--sm-macroexpand{,-1}') during its own
@@ -1483,7 +1505,7 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
         cell
     };
     let expanded = match cell {
-        Value::Subr(_) => i.macroexpand_env(form, &env)?,
+        Value::Subr(_) => i.macroexpand_env(&form, &env)?,
         _ => i.apply(&Value::Sym(mac_sym), vec![form.clone(), env.clone()])?,
     };
     let sm = sm_active(i, &env)?;
