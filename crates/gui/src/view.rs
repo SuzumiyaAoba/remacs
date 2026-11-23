@@ -5505,7 +5505,25 @@ fn grid_image_element(
         (None, None) => source,
     };
     let source = grid_image_slice_element(source.id(element_id).into_any_element(), slice);
-    let image_left = border + cell_width * image.column as f32;
+    let pixelwise_segment = grid
+        .pixelwise_segments
+        .iter()
+        .find(|segment| {
+            segment.row == image.row
+                && segment.left_column <= image.column
+                && image.column < segment.right_column
+        })
+        .or_else(|| {
+            grid.pixelwise_segments
+                .iter()
+                .find(|segment| segment.row == image.row && segment.right_column == image.column)
+        });
+    let pixelwise_x_offset = pixelwise_segment.map_or(0, |segment| segment.x_offset);
+    let pixelwise_width_adjustment =
+        pixelwise_segment.map_or(0, |segment| segment.width_adjustment);
+    let image_left = border
+        + cell_width * image.column as f32
+        + px(pixelwise_x_offset as f32);
     let image_column = image.column;
     let image_top =
         border + grid_row_top_for_cell(grid, image.row, image.column, line_height);
@@ -5530,9 +5548,10 @@ fn grid_image_element(
                     line_height,
                 );
             (
-                border + cell_width * area.left as f32,
+                border + cell_width * area.left as f32 + px(pixelwise_x_offset as f32),
                 top,
-                cell_width * area.width as f32,
+                (cell_width * area.width as f32 + px(pixelwise_width_adjustment as f32))
+                    .max(px(0.0)),
                 bottom - top,
             )
         });
@@ -5551,12 +5570,15 @@ fn grid_image_element(
             .top
             .saturating_add(scroll.rows)
             .min(grid.row_heights.len());
-        let region_left = border + cell_width * scroll.left as f32;
+        let region_left =
+            border + cell_width * scroll.left as f32 + px(pixelwise_x_offset as f32);
         let region_top =
             border + grid_window_row_top(grid, scroll.window_id, first_row, line_height);
         let region_bottom =
             border + grid_window_row_top(grid, scroll.window_id, end_row, line_height);
-        let region_width = cell_width * scroll.width as f32;
+        let region_width =
+            (cell_width * scroll.width as f32 + px(pixelwise_width_adjustment as f32))
+                .max(px(0.0));
         let mut image_element = div()
             .absolute()
             .left(image_left - region_left)
