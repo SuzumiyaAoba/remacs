@@ -2078,6 +2078,7 @@ command-line arguments.\" \
             "coding-system-for-write",
             "signal-process-functions",
             "interrupt-process-functions",
+            "org-load-modules-maybe",
             "network",
             "run",
             "stop",
