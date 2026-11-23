@@ -998,8 +998,8 @@ pub(crate) fn f_defalias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult 
 fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // GNU eval.c Fdefvaralias ordering: CHECK_SYMBOL both, constant /
     // forwarded / localized alias rejection, cyclic chain check on the
-    // BASE's C-level indirection chain, bound-alias value propagation to an
-    // unbound BASE, let-bound-alias rejection, then install + mark both
+    // BASE's C-level indirection chain, bound-alias value propagation or
+    // overwrite warning, let-bound-alias rejection, then install + mark both
     // special + (possibly nil) docstring store.
     let newv = want_sym(i, &args[0])?;
     let base = want_sym(i, &args[1])?;
@@ -1061,7 +1061,24 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if !matches!(nv, Value::Sym(s) if s == sym::UNBOUND) {
         let bv = i.symbol_value(base);
         if matches!(bv, Value::Sym(s) if s == sym::UNBOUND) {
-            i.set_symbol(base, nv)?;
+            i.set_symbol(base, nv.clone())?;
+        } else if !eq_values(&nv, &bv) {
+            let format = Value::string(
+                "Overwriting value of `%s' by aliasing to `%s'",
+            );
+            let message = super::strfn::f_format_message(
+                i,
+                vec![format, args[0].clone(), args[1].clone()].into(),
+            )?;
+            let defvaralias = i.q("defvaralias");
+            let losing_value = i.q("losing-value");
+            let warning_type = Value::list(vec![
+                Value::Sym(defvaralias),
+                Value::Sym(losing_value),
+                args[0].clone(),
+            ]);
+            let display_warning = i.q("display-warning");
+            i.apply(&Value::Sym(display_warning), vec![warning_type, message])?;
         }
     }
     if i.specbind_for(newv) {
