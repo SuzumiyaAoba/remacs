@@ -2582,7 +2582,15 @@ impl Render for EditorView {
                                 content_left_offset,
                                 content_top_offset,
                             );
-                            let current = (position, absolute_position, text_window_id);
+                            let mut current = (position, absolute_position, text_window_id);
+                            // A fresh hit-test has a fresh timestamp even when
+                            // the pointer and rendered text are unchanged.
+                            // Compare its location so redraws (such as a
+                            // scroll) still refresh hover without synthesizing
+                            // motion on every polling tick.
+                            if let Some(position) = &mut current.0 {
+                                position.timestamp = 0;
+                            }
                             if previous.is_some_and(|previous| previous != current) {
                                 let _ = view.tx.send_mouse_move_for_window(
                                     position,
