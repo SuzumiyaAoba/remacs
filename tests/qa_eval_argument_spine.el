@@ -182,6 +182,37 @@
          (list (car err) (cadr err) (caddr err)
                qa-eval-spine-circular-macro-side))))
     '(wrong-type-argument listp tail nil))
+(defvar qa-eval-macro-repair-count 0)
+(defvar qa-eval-macro-repair-target nil)
+(qa (progn
+      (setq qa-eval-macro-repair-count 0
+            qa-eval-macro-repair-target nil)
+      (if (fboundp 'macroexpand-all) nil (require 'macroexp))
+      (fset 'qa-eval-macro-trigger
+            (cons 'macro
+                  (make-interpreted-closure nil
+                    '((setcdr qa-eval-macro-repair-target
+                              qa-eval-macro-repair-target)
+                      nil)
+                    nil)))
+      (fset 'qa-eval-macro-repair
+            (cons 'macro
+                  (make-interpreted-closure nil
+                    '((setq qa-eval-macro-repair-count
+                            (1+ qa-eval-macro-repair-count))
+                      (if (= qa-eval-macro-repair-count 2)
+                          (setcdr qa-eval-macro-repair-target nil))
+                      nil)
+                    nil)))
+      (let* ((target (list '(qa-eval-macro-repair)))
+             (form (cons 'list (cons '(qa-eval-macro-trigger) target))))
+        (setq qa-eval-macro-repair-target target)
+        (list (condition-case err
+                  (progn (macroexpand-all form) 'ok)
+                (error (list :error err)))
+              qa-eval-macro-repair-count
+              (eq (cdr target) target))))
+    '(ok 2 nil))
 
 ;; Circular malformed let specs signal promptly and retain the original
 ;; cyclic spec as one error datum instead of flattening it forever.

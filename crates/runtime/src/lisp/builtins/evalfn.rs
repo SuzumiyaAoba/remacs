@@ -1113,6 +1113,31 @@ fn macroexpand_dotted_tail(i: &mut Interp, list: &Value) -> Result<Option<Value>
     }
 }
 
+/// Check the input spine before expansion starts.  Once a macro expander has
+/// run, a later cycle may be temporary and should be followed like any other
+/// live cdr link.
+fn macroexpand_spine_is_circular(i: &mut Interp, list: &Value) -> Result<bool, Flow> {
+    let mut cursor = list.clone();
+    let mut seen = FxHashSet::default();
+    let mut until_quit = 4096usize;
+    loop {
+        match cursor {
+            Value::Cons(cell) => {
+                if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                    return Ok(true);
+                }
+                cursor = crate::lisp::eval::cons_parts(i, &cell)?.1;
+                until_quit -= 1;
+                if until_quit == 0 {
+                    i.maybe_quit()?;
+                    until_quit = 4096;
+                }
+            }
+            _ => return Ok(false),
+        }
+    }
+}
+
 /// Read and expand each cons cell as it is reached.  In particular, do not
 /// snapshot a scoped body before expanding its first form: a macro expander
 /// can mutate a later body cell, and GNU observes that mutation when it gets
@@ -1122,18 +1147,25 @@ fn macroexpand_live_spine(
     list: &Value,
     mut expand: impl FnMut(&mut Interp, &Value) -> EvalResult,
 ) -> EvalResult {
+    let initially_circular = macroexpand_spine_is_circular(i, list)?;
     let mut cursor = list.clone();
     let mut cars = Vec::new();
-    let mut seen = FxHashSet::default();
+    let mut seen = if initially_circular {
+        Some(FxHashSet::default())
+    } else {
+        None
+    };
     let mut unchanged = true;
     let mut until_quit = 4096usize;
     let tail = loop {
         match cursor {
             Value::Nil => break Value::Nil,
             Value::Cons(cell) => {
-                if !seen.insert(Rc::as_ptr(&cell) as usize) {
-                    // Keep the existing fallback for circular input.
-                    return Ok(list.clone());
+                if let Some(seen) = &mut seen {
+                    if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                        // Keep the existing fallback for circular input.
+                        return Ok(list.clone());
+                    }
                 }
                 let original = crate::lisp::eval::cons_parts(i, &cell)?.0;
                 let expanded = expand(i, &original)?;
