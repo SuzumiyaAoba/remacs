@@ -21,6 +21,31 @@ fn specbind_in_scope(
     Ok(())
 }
 
+fn apply_minibuffer_exit_frame(
+    interp: &mut Interp,
+    frame: &crate::editor::FrameRef,
+) -> Result<(), Flow> {
+    let Some(parameter) = interp.q_soft("minibuffer-exit") else {
+        return Ok(());
+    };
+    let parameters = frame.borrow().params.clone();
+    let value = crate::lisp::eval::plist_get_v(&parameters, &Value::Sym(parameter));
+    if value.is_nil() {
+        return Ok(());
+    }
+    if matches!(
+        &value,
+        Value::Sym(symbol)
+            if matches!(interp.symbol_name(*symbol).as_str(), "iconify-frame" | "delete-frame")
+    ) {
+        interp
+            .apply(&value, vec![Value::Frame(frame.clone())])
+            .map(|_| ())
+    } else {
+        crate::editor::set_frame_invisible(interp, frame)
+    }
+}
+
 impl Interp {
     /// Read minibuffer input via the front-end hook. `single` reads one
     /// raw key event instead of a full line.
@@ -219,6 +244,8 @@ impl Interp {
 
             self.minibuf_prompts.push(prompt.to_string());
 
+            let minibuffer_frame = self.selected_frame.clone();
+
             // ---- enter the minibuffer ----
             self.set_current_buffer(mb_id);
             // GNU set_minibuffer_mode: `minibuffer-mode' if fbound (it
@@ -409,9 +436,20 @@ impl Interp {
             unbind_r?;
             inactive_mode_r?;
             per_level_unbind_r?;
+            let minibuffer_exit_r = if self.minibuf_level == 0 {
+                match &minibuffer_frame {
+                    Some(frame) if !frame.borrow().dead => {
+                        apply_minibuffer_exit_frame(self, frame)
+                    }
+                    _ => Ok(()),
+                }
+            } else {
+                Ok(())
+            };
             if let Err(f) = hook_r {
                 return Err(f);
             }
+            minibuffer_exit_r?;
 
             let input = input_r?;
 
