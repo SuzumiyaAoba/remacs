@@ -2876,8 +2876,8 @@ The optional FALLBACK-COMMAND argument indicates which command to run."
 	       (condition-case nil
 		   (and (file-directory-p dir)
 			(not (ido-nonreadable-directory-p dir))
+			(not (ido-directory-too-big-p dir))
 			(or (not must-match)
-			    ;; TODO. check for too-big.
 			    (ido-set-matches-1
 			     (if (eq ido-cur-item 'file)
 				 (ido-make-file-list-1 dir)
@@ -3396,6 +3396,7 @@ instead removed from the current item list."
 		       (condition-case nil
 			   (and (file-directory-p dir)
 				(not (ido-nonreadable-directory-p dir))
+				(not (ido-directory-too-big-p dir))
 				(setq fl (if (eq ido-cur-item 'file)
 					     (ido-make-file-list-1 dir t)
 					   (ido-make-dir-list-1 dir t))))
