@@ -5209,6 +5209,7 @@ fn render_popup_menu(
     default_style: CellStyle,
     faces: &mut FaceCtx,
     screen: &mut [Vec<ScreenCell>],
+    help_echoes: &mut Vec<GridHelpEcho>,
 ) -> Vec<GridPopupMenuItem> {
     if menu.entries.is_empty() || width < 3 || height < 3 {
         return Vec::new();
@@ -5228,6 +5229,14 @@ fn render_popup_menu(
                     entry.label.chars().map(display_char_width).sum::<usize>()
                         + entry.depth.saturating_sub(base) * 2
                         + usize::from(entry.submenu) * 2
+                        + usize::from(entry.checked) * 2
+                        + entry
+                            .key_hint
+                            .as_ref()
+                            .map(|hint| {
+                                1 + hint.chars().map(display_char_width).sum::<usize>()
+                            })
+                            .unwrap_or(0)
                 })
                 .max()
                 .unwrap_or(1);
@@ -5335,19 +5344,39 @@ fn render_popup_menu(
         let base = parent.map_or(0, |parent| menu.entries[parent].depth + 1);
         for (row_index, index, back) in painted_rows {
             let item = &menu.entries[index];
-            let text = if back {
+            let label = if back {
                 format!("‹ {}", item.label)
             } else if item.separator {
                 "─".repeat(panel_width.saturating_sub(2))
             } else {
                 format!(
-                    "{}{}{}",
+                    "{}{}{}{}",
                     " ".repeat(item.depth.saturating_sub(base) * 2),
+                    if item.checked { "✓ " } else { "" },
                     item.label,
                     if item.submenu { " ▸" } else { "" }
                 )
             };
-            let text = fit_text_to_cells_with_tab_width(&text, panel_width.saturating_sub(2), 8).0;
+            let available_width = panel_width.saturating_sub(2);
+            let text = if !back
+                && !item.separator
+                && let Some(hint) = &item.key_hint
+            {
+                let hint = format!(" {hint}");
+                let hint_width = hint.chars().map(display_char_width).sum::<usize>();
+                let label = fit_text_to_cells_with_tab_width(
+                    &label,
+                    available_width.saturating_sub(hint_width),
+                    8,
+                )
+                .0;
+                let label_width = label.chars().map(display_char_width).sum::<usize>();
+                let padding = available_width.saturating_sub(label_width + hint_width);
+                format!("{label}{}{hint}", " ".repeat(padding))
+            } else {
+                label
+            };
+            let text = fit_text_to_cells_with_tab_width(&text, available_width, 8).0;
             let row_style = if !back && menu.highlighted() == Some(index) {
                 selected_style
             } else {
@@ -5357,6 +5386,21 @@ fn render_popup_menu(
             let char_styles = text.chars().map(|_| row_style).collect::<Vec<_>>();
             if let Some(row) = screen.get_mut(row_index) {
                 place_text_row(row, left + 1, &text, &cell_styles, &char_styles, false);
+            }
+            if !back
+                && !item.separator
+                && let Some(help) = &item.help
+            {
+                push_help_echo(
+                    help_echoes,
+                    GridHelpEcho {
+                        row: row_index,
+                        left: left + 1,
+                        width: available_width,
+                        text: help.clone(),
+                        inhibit_substitution: true,
+                    },
+                );
             }
             hit_items.push(GridPopupMenuItem {
                 menu_id: menu.id,
@@ -15420,6 +15464,7 @@ fn render_grid_internal(
             default_style,
             &mut fctx,
             &mut screen_rows,
+            &mut help_echoes,
         );
     }
     pixelwise_row_boundaries.sort_unstable_by_key(|(row, offset)| (*row, offset.unsigned_abs()));

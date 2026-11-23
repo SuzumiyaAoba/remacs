@@ -27,6 +27,9 @@ pub struct PopupMenuEntry {
     pub submenu: bool,
     pub depth: usize,
     pub value: Option<Value>,
+    pub checked: bool,
+    pub help: Option<String>,
+    pub key_hint: Option<String>,
 }
 
 /// Choices and view navigation for one synchronous popup request.
@@ -57,6 +60,9 @@ impl PopupMenuEntry {
             submenu: false,
             depth,
             value: None,
+            checked: false,
+            help: None,
+            key_hint: None,
         }
     }
     fn separator() -> Self {
@@ -513,17 +519,10 @@ fn keymap_entries(
         if binding.is_nil() {
             continue;
         }
-        let Some(ParsedMenuItem {
-            label,
-            definition,
-            separator,
-            enabled,
-            ..
-        }) = keymap_item(i, &key, &binding)?
-        else {
+        let Some(item) = keymap_item(i, &key, &binding)? else {
             continue;
         };
-        if separator {
+        if item.separator {
             entries.push(PopupMenuEntry::separator_at(depth));
             continue;
         }
@@ -535,16 +534,29 @@ fn keymap_entries(
             other => other,
         };
         keys.push(event);
+        let label = item.label.clone();
+        let definition = item.definition.clone();
+        let enabled = item.enabled;
         let resolved = crate::editor::keymap_def(i, definition.clone())?;
-        if let Some(submenu) = menu_keymap_from_definition(i, &resolved, depth + 1) {
+        let submenu = menu_keymap_from_definition(i, &resolved, depth + 1);
+        let leaf_command = !definition.is_nil() && submenu.is_none();
+        let key_hint = item.keyboard_equivalent(i, leaf_command)?;
+        let checked = leaf_command && item.button_selected(i)?;
+        let help = item.help_text();
+        if let Some(submenu) = submenu {
             if !enabled {
-                entries.push(PopupMenuEntry::text(label, depth));
+                let mut entry = PopupMenuEntry::text(label, depth);
+                entry.help = help;
+                entry.key_hint = key_hint;
+                entries.push(entry);
                 continue;
             }
             let children = keymap_entries(i, &submenu, &keys, depth + 1)?;
             if !children.is_empty() {
                 let mut parent = PopupMenuEntry::text(label, depth);
                 parent.submenu = true;
+                parent.help = help;
+                parent.key_hint = key_hint;
                 entries.push(parent);
                 entries.extend(children);
             }
@@ -560,6 +572,9 @@ fn keymap_entries(
                 submenu: false,
                 depth,
                 value: (enabled && definition.truthy()).then(|| Value::list(keys)),
+                checked,
+                help,
+                key_hint,
             });
         }
     }
@@ -652,6 +667,9 @@ fn menu_entries(i: &mut Interp, menu: &Value) -> Result<Vec<PopupMenuEntry>, Flo
                                 submenu: false,
                                 depth: 1,
                                 value: Some(cell.cdr.clone()),
+                                checked: false,
+                                help: None,
+                                key_hint: None,
                             });
                         }
                     }
