@@ -1017,9 +1017,9 @@ fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
     // `risky-local-variable t'.  Constancy is NOT enforced at runtime
     // ("not actually enforced by Emacs Lisp") — only nil, t and
     // keywords are NOWRITE; defconst must never set `constant'.
+    let v = eval_argument(i, &args, 1)?;
     check_dynamic_variable_declaration(i, sid, &name_v)?;
     i.obarray.symbol_mut(sid).special = true;
-    let v = eval_argument(i, &args, 1)?;
     i.set_symbol_default_as(sid, v, &name_v)?;
     if let Value::Str(s) = doc {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
