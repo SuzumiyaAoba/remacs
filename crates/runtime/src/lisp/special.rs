@@ -942,14 +942,14 @@ pub(crate) fn check_dynamic_variable_declaration(
 fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
     // GNU eval.c: (defvar NAME [INIT [DOCSTRING]]) — a 4th argument
     // signals `(error "Too many arguments")'.
-    if !cdr(i, &cdr(i, &cdr(i, &args)?)?)?.is_nil() {
-        return Err(i.error("Too many arguments".to_string()));
-    }
     let name_v = car(i, &args)?;
     let sid = match i.sym_id(&name_v) {
         Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &name_v)),
     };
+    if !cdr(i, &cdr(i, &cdr(i, &args)?)?)?.is_nil() {
+        return Err(i.error("Too many arguments".to_string()));
+    }
     // GNU's defvar operates through `indirect-variable'.
     let sid = i.var_alias_target(sid);
     let init = cadr(i, &args)?;
@@ -1002,14 +1002,14 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
 fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
     // Same arg cap as `defvar' — `(defconst S V D X)' signals
     // `(error "Too many arguments")'.
-    if !cdr(i, &cdr(i, &cdr(i, &args)?)?)?.is_nil() {
-        return Err(i.error("Too many arguments".to_string()));
-    }
     let name_v = car(i, &args)?;
     let sid = match i.sym_id(&name_v) {
         Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &name_v)),
     };
+    if !cdr(i, &cdr(i, &cdr(i, &args)?)?)?.is_nil() {
+        return Err(i.error("Too many arguments".to_string()));
+    }
     // GNU captures the docstring from the original form before INIT can
     // rewrite its third argument cell.
     let doc = nth_arg(i, &args, 2)?;
