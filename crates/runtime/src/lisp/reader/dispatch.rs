@@ -132,17 +132,17 @@ impl Reader<'_> {
                         n = next;
                         self.pos += 1;
                         digits = digits.saturating_add(1);
+                        if digits == 2 && n == 0 {
+                            if matches!(&self.source, super::ReadSource::Function { .. }) {
+                                while self.next()?.is_some() {}
+                            } else {
+                                self.pos = self.chars.len();
+                            }
+                            return Ok(Value::Nil);
+                        }
                     } else {
                         break;
                     }
-                }
-                if digits > 0 && n == 0 {
-                    if matches!(&self.source, super::ReadSource::Function { .. }) {
-                        while self.next()?.is_some() {}
-                    } else {
-                        self.pos = self.chars.len();
-                    }
-                    return Ok(Value::Nil);
                 }
                 // Skip N characters first. If the count itself consumes the
                 // separator, GNU ends this read instead of starting the next
