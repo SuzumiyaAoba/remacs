@@ -6280,6 +6280,9 @@ fn paint_grid_line(
     row: usize,
     line: &ShapedLine,
     origin: Point<Pixels>,
+    stipple_bounds: Bounds<Pixels>,
+    stipple_row_top: Pixels,
+    stipple_row_height: Pixels,
     row_height: Pixels,
     cell_width: Pixels,
     line_height: Pixels,
@@ -6343,6 +6346,17 @@ fn paint_grid_line(
         };
         window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
             window.paint_quad(fill(clip, background));
+            paint_stipple_backgrounds(
+                grid,
+                row,
+                line,
+                stipple_bounds,
+                stipple_row_top,
+                stipple_row_height,
+                default_background,
+                background_alpha,
+                window,
+            );
             let shifted_origin = point(origin.x + px(segment.x_offset as f32), origin.y);
             let _ = line.paint(shifted_origin, line_height, window, cx);
         });
@@ -6385,6 +6399,9 @@ fn paint_grid_row_at(
         row,
         line,
         origin,
+        bounds,
+        row_top,
+        row_height,
         text_height,
         cell_width,
         paint_line_height,
@@ -6658,6 +6675,9 @@ fn paint_vscroll_regions(
                     row,
                     line,
                     origin,
+                    bounds,
+                    row_top,
+                    row_height,
                     row_height,
                     cell_width,
                     line_height,
