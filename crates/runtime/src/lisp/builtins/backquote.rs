@@ -591,20 +591,19 @@ fn f_backquote_listify(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         Value::Cons(_) | Value::Nil => {}
         other => return Err(i.wrong_type_mut("listp", other)),
     }
+    let old_tail_tag = match &a[1] {
+        Value::Cons(c) => c
+            .try_borrow()
+            .map(|cell| cell.car.clone())
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote cons cell"))?,
+        Value::Nil => Value::Nil,
+        _ => unreachable!(),
+    };
+    // GNU evaluates `(= (car old-tail) 0)' before checking LIST, so a bad
+    // tag takes precedence over an improper list.
+    bq_check_num_or_mark(i, &old_tail_tag)?;
     bq_check_list(i, &a[0])?;
     bq_check_list_car(i, &a[0])?;
-    match &a[1] {
-        Value::Cons(c) => {
-            let car_v = c
-                .try_borrow()
-                .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote cons cell"))?
-                .car
-                .clone();
-            bq_check_num_or_mark(i, &car_v)?;
-        }
-        Value::Nil => bq_check_num_or_mark(i, &Value::Nil)?,
-        other => return Err(i.wrong_type_mut("listp", other)),
-    }
     let syms = bq_syms(i);
     bq_listify(i, &a[0], &a[1], &syms)
 }
