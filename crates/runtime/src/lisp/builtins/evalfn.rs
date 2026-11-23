@@ -977,15 +977,21 @@ fn unfold_funcall_lambda(
             None => return Ok(None),
         };
         if sid == sym::OPTIONAL {
-            if restp || k + 1 == formals.len() {
-                return Ok(None);
+            if restp {
+                return Err(i.error("&optional found after &rest in anonymous lambda"));
+            }
+            if k + 1 == formals.len() {
+                return Err(i.error("Nothing after &optional in anonymous lambda"));
             }
             optionalp = true;
             continue;
         }
         if sid == sym::REST {
-            if k + 1 == formals.len() || k + 2 != formals.len() {
-                return Ok(None);
+            if k + 1 == formals.len() {
+                return Err(i.error("Nothing after &rest in anonymous lambda"));
+            }
+            if k + 2 != formals.len() {
+                return Err(i.error("Multiple vars after &rest in anonymous lambda"));
             }
             restp = true;
             continue;
