@@ -2074,6 +2074,24 @@ fn macroexpand_all_expanded(
                             body_and_handlers,
                         );
                     }
+                    sym::UNWIND_PROTECT => {
+                        if items.len() == 1 {
+                            return Ok(Value::Nil);
+                        }
+                        if items.len() == 2 {
+                            return macroexpand_all_recur(i, &items[1]);
+                        }
+                        let body = macroexpand_all_recur(i, &items[1])?;
+                        let cleanup = macroexpand_list_tail(i, &expanded, 2)?;
+                        let cleanup =
+                            macroexpand_live_spine(i, &cleanup, macroexpand_all_recur)?;
+                        return macroexpand_prepend_preserving(
+                            i,
+                            &expanded,
+                            vec![items[0].clone(), body],
+                            cleanup,
+                        );
+                    }
                     sym::COND => {
                         // GNU `macroexp--expand-all': `(cond CLAUSES...)'
                         // runs `macroexp--all-clauses' (skip 0) — every
