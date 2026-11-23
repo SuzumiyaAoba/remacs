@@ -853,9 +853,9 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool, who: SymId) -> EvalRe
             scan_until_quit = 1024;
         }
     }
-    // RHS evaluation can mutate the remaining argument spine; continue
-    // checking visited cells while processing the saved pair cursors.
-    seen.clear();
+    // RHS evaluation can mutate the remaining argument spine; continue from
+    // the saved pair cursors, including cells revisited after a cycle is
+    // repaired by a later RHS.
     let mut last = Value::Nil;
     let mut n = 0i128;
     let mut until_quit = 1024usize;
@@ -863,9 +863,6 @@ fn setq_pairs(i: &mut Interp, args: &Value, default: bool, who: SymId) -> EvalRe
         match cur.clone() {
             Value::Nil => return Ok(last),
             Value::Cons(c) => {
-                if !seen.insert(Rc::as_ptr(&c) as usize) {
-                    return Err(i.signal_data(sym::CIRCULAR_LIST, vec![cur.clone()]));
-                }
                 let (sym_v, next1) = cons_parts(i, &c)?;
                 n += 1;
                 let (val_f, next2) = {

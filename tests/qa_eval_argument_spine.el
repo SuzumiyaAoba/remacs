@@ -379,6 +379,33 @@
         (circular-list
          (list (car err) qa-eval-circular-setq-side-effect))))
     '(circular-list nil))
+(defvar qa-eval-setq-repair-count 0)
+(qa (progn
+      (setq qa-eval-setq-repair-count 0)
+      (let* ((rhs2-cell (cons nil nil))
+             (y-cell (cons 'qa-eval-setq-y rhs2-cell))
+             (rhs1-cell (cons nil y-cell))
+             (x-cell (cons 'qa-eval-setq-x rhs1-cell))
+             (rhs1-form
+              (list 'setcdr
+                    (list 'quote rhs2-cell)
+                    (list 'quote y-cell)))
+             (rhs2-form
+              (list 'progn
+                    (list 'setq 'qa-eval-setq-repair-count
+                          (list '1+ 'qa-eval-setq-repair-count))
+                    (list 'if
+                          (list '= 'qa-eval-setq-repair-count 2)
+                          (list 'setcdr (list 'quote rhs2-cell) nil))
+                    nil))
+             (form (cons 'setq x-cell)))
+        (setcar rhs1-cell rhs1-form)
+        (setcar rhs2-cell rhs2-form)
+        (list (condition-case err
+                  (eval form nil)
+                (error (list :error (car err))))
+              qa-eval-setq-repair-count)))
+    '(nil 3))
 
 ;; A circular progn body is rejected before its first form runs.
 (defvar qa-eval-circular-progn-side-effect nil)
