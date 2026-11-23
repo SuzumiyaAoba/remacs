@@ -1749,6 +1749,7 @@ fn macroexpand_all_expanded(
                         }
                         return Ok(expanded);
                     }
+                    sym::FUNCTION => return Ok(expanded),
                     sym::LET | sym::LET_STAR | sym::AND_LET_STAR if items.len() >= 2 => {
                         // GNU `cl--sm-macroexpand-1' (let/let* arm):
                         // bound names shadow symbol macros inside their
