@@ -1892,6 +1892,11 @@ impl Window {
         self.platform_window.set_icon_name(icon_name);
     }
 
+    /// Updates the requested icon position when supported by the window manager.
+    pub fn set_icon_position(&mut self, position: Option<(i32, i32)>) {
+        self.platform_window.set_icon_position(position);
+    }
+
     /// Update the semantic contents exposed to assistive technology.
     pub fn set_accessibility_tree(&mut self, tree: accesskit::TreeUpdate) {
         #[cfg(target_os = "linux")]

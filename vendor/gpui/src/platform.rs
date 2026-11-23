@@ -589,6 +589,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_hovered(&self) -> bool;
     fn set_title(&mut self, title: &str);
     fn set_icon_name(&mut self, _icon_name: &str) {}
+    fn set_icon_position(&mut self, _position: Option<(i32, i32)>) {}
     fn set_accessibility_tree(&mut self, _tree: accesskit::TreeUpdate) {}
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance);
     fn minimize(&self);

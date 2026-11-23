@@ -718,6 +718,7 @@ pub fn run_gui_with_dump(
             let mut frame_parents = HashMap::<usize, Option<usize>>::new();
             let mut frame_keep_ratios = HashMap::<usize, ChildFrameKeepRatioState>::new();
             let mut window_modes = HashMap::<usize, Option<String>>::new();
+            let mut window_icon_positions = HashMap::<usize, Option<(i32, i32)>>::new();
             let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
             let mut frame_focus_on_map = HashMap::<usize, bool>::new();
             let mut frame_skip_taskbar = HashMap::<usize, bool>::new();
@@ -744,6 +745,7 @@ pub fn run_gui_with_dump(
                             .retain(|frame_id, _| live_frames.contains(frame_id));
                         pending_frame_orders.retain(|frame_id, _| live_frames.contains(frame_id));
                         frame_keep_ratios.retain(|frame_id, _| live_frames.contains(frame_id));
+                        window_icon_positions.retain(|frame_id, _| live_frames.contains(frame_id));
                         let snapshots = frame_snapshots_parent_first(snapshots);
                         let mut native_window_changed = HashSet::new();
                         for mut snapshot in snapshots {
@@ -758,6 +760,16 @@ pub fn run_gui_with_dump(
                                 window_visibilities.get(&frame_id) != Some(&visibility);
                             window_visibilities.insert(frame_id, visibility);
                             let grid = snapshot.grid.clone();
+                            let icon_position = snapshot.icon_left.zip(snapshot.icon_top).and_then(
+                                |(left, top)| {
+                                    Some((i32::try_from(left).ok()?, i32::try_from(top).ok()?))
+                                },
+                            );
+                            let update_icon_position = match window_icon_positions.get(&frame_id) {
+                                Some(previous) => previous != &icon_position,
+                                None => icon_position.is_some(),
+                            };
+                            window_icon_positions.insert(frame_id, icon_position);
                             let image_cache_entries = snapshot.image_cache_entries.clone();
                             let image_cache_size = snapshot.image_cache_size.clone();
                             let modifier_mapping = snapshot.modifier_mapping;
@@ -869,6 +881,7 @@ pub fn run_gui_with_dump(
                                 let requested_behavior = behavior.clone();
                                 let requested_represented_file = represented_file.clone();
                                 let requested_icon_name = snapshot.icon_name.clone();
+                                let requested_icon_position = icon_position;
                                 let child_bounds = handle.update(cx, move |view, window, cx| {
                                     view.set_image_cache_metrics(
                                         image_cache_entries,
@@ -918,6 +931,9 @@ pub fn run_gui_with_dump(
                                         cx.notify();
                                     }
                                     view.set_icon_name(requested_icon_name, window);
+                                    if update_icon_position {
+                                        window.set_icon_position(requested_icon_position);
+                                    }
                                     window.set_opacity(frame_opacity(
                                         alpha_active,
                                         alpha_inactive,
@@ -1032,6 +1048,8 @@ pub fn run_gui_with_dump(
                                 let initial_represented_file = represented_file.clone();
                                 let represented_file_for_window = represented_file.clone();
                                 let initial_icon_name = snapshot.icon_name.clone();
+                                let initial_icon_position = icon_position;
+                                let update_initial_icon_position = update_icon_position;
                                 let initial_titlebar_appearance = titlebar_appearance;
                                 let initial_image_cache_entries = image_cache_entries.clone();
                                 let initial_image_cache_size = image_cache_size.clone();
@@ -1050,6 +1068,9 @@ pub fn run_gui_with_dump(
                                     );
                                     view.set_grid(grid, window);
                                     view.set_icon_name(initial_icon_name, window);
+                                    if update_initial_icon_position {
+                                        window.set_icon_position(initial_icon_position);
+                                    }
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
                                     view.apply_minimum_cells(
@@ -1136,6 +1157,7 @@ pub fn run_gui_with_dump(
                             let represented_file = snapshot.represented_file.clone();
                             let represented_file_for_window = represented_file.clone();
                             let icon_name_for_window = snapshot.icon_name.clone();
+                            let icon_position_for_window = icon_position;
                             let titlebar_appearance = (
                                 snapshot.parent_frame.is_none() && !snapshot.undecorated,
                                 snapshot.ns_transparent_titlebar,
@@ -1161,6 +1183,9 @@ pub fn run_gui_with_dump(
                                 );
                                 window.set_window_appearance(ns_appearance);
                                 window.set_represented_file(represented_file_for_window);
+                                if let Some(position) = icon_position_for_window {
+                                    window.set_icon_position(Some(position));
+                                }
                                 let window_appearance = window.appearance();
                                 app.new(|cx| {
                                     let mut view = build_managed_editor_view(
@@ -1255,6 +1280,7 @@ pub fn run_gui_with_dump(
                             window_modes.remove(&frame_id);
                             frame_parents.remove(&frame_id);
                             frame_keep_ratios.remove(&frame_id);
+                            window_icon_positions.remove(&frame_id);
                             frame_behaviors.remove(&frame_id);
                             frame_focus_on_map.remove(&frame_id);
                             frame_skip_taskbar.remove(&frame_id);

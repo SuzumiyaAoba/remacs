@@ -17,7 +17,7 @@ use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
     errors::ConnectionError,
-    properties::{WmSizeHints, WmSizeHintsSpecification},
+    properties::{WmHints, WmSizeHints, WmSizeHintsSpecification},
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -1607,6 +1607,29 @@ impl PlatformWindow for X11Window {
                 self.0.state.borrow().atoms.UTF8_STRING,
                 icon_name.as_bytes(),
             ),
+        )
+        .log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
+    fn set_icon_position(&mut self, position: Option<(i32, i32)>) {
+        let scale_factor = self.0.state.borrow().scale_factor;
+        let position = position.map(|(left, top)| {
+            (
+                (left as f32 * scale_factor).round() as i32,
+                (top as f32 * scale_factor).round() as i32,
+            )
+        });
+        let mut hints = WmHints::new();
+        if let Ok(cookie) = WmHints::get(&self.0.xcb, self.0.x_window)
+            && let Ok(Some(existing)) = cookie.reply()
+        {
+            hints = existing;
+        }
+        hints.icon_position = position;
+        check_reply(
+            || "X11 ChangeProperty for WM_HINTS icon position failed.",
+            hints.set(&self.0.xcb, self.0.x_window),
         )
         .log_err();
         xcb_flush(&self.0.xcb);
