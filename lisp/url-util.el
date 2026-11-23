@@ -227,7 +227,9 @@ Will not do anything if `url-show-status' is nil."
 
 ;;;###autoload
 (defun url-parse-query-string (query &optional downcase allow-newlines)
-  (let (retval pairs cur key val)
+  (let ((entries (make-hash-table :test 'equal))
+        (tails (make-hash-table :test 'equal))
+        retval pairs cur key val)
     (setq pairs (split-string query "[;&]"))
     (while pairs
       (setq cur (car pairs)
@@ -245,10 +247,16 @@ Will not do anything if `url-show-status' is nil."
                                         allow-newlines)))
           (if downcase
               (setq key (downcase key)))
-          (setq cur (assoc key retval))
+          (setq cur (gethash key entries))
           (if cur
-              (setcdr cur (append (cdr cur) (list val)))
-            (setq retval (cons (list key val) retval))))))
+              (let ((tail (gethash key tails)))
+                (setcdr tail (list val))
+                (puthash key (cdr tail) tails))
+            (let* ((entry (list key val))
+                   (tail (cdr entry)))
+              (puthash key entry entries)
+              (puthash key tail tails)
+              (push entry retval))))))
     ;;Remacs: return parameters in the order they appeared in the query.
     (nreverse retval)))
 
