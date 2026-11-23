@@ -1592,6 +1592,13 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
     // (bound by `macroexpand-all') to `macroexpand' explicitly.
     let env_id = i.q("macroexpand-all-environment");
     let mut form = form.clone();
+    let source_lambda = match &form {
+        Value::Cons(cell) => {
+            let head = crate::lisp::eval::cons_parts(i, cell)?.0;
+            i.sym_is(&head, sym::LAMBDA)
+        }
+        _ => false,
+    };
     let backquote_list_star = i.q("backquote-list*");
     let is_backquote_list_star = match &form {
         Value::Cons(cell) => {
@@ -1687,7 +1694,15 @@ fn macroexpand_all_inner(i: &mut Interp, form: &Value) -> EvalResult {
             return Err(error);
         }
     }
-    let result = macroexpand_all_expanded(i, expanded, env_id, env, sm, compiler_macro);
+    let result = macroexpand_all_expanded(
+        i,
+        expanded,
+        env_id,
+        env,
+        sm,
+        compiler_macro,
+        source_lambda,
+    );
     i.unbind_to(mark)?;
     result
 }
@@ -1699,6 +1714,7 @@ fn macroexpand_all_expanded(
     env: Value,
     sm: bool,
     compiler_macro: Option<Value>,
+    source_lambda: bool,
 ) -> EvalResult {
     match &expanded {
         Value::Cons(c) => {
@@ -1846,7 +1862,7 @@ fn macroexpand_all_expanded(
                         // spec inside `declare') and passes through
                         // verbatim, extra elements included.
                         if let Value::Cons(lc) = &items[1] {
-                            let (head, _) = crate::lisp::eval::cons_parts(i, lc)?;
+                            let (head, lambda_tail) = crate::lisp::eval::cons_parts(i, lc)?;
                             if i.sym_is(&head, sym::LAMBDA) {
                                 // Expand the lambda's elements the way
                                 // `macroexp--all-forms' does (arglist is
@@ -1854,27 +1870,25 @@ fn macroexpand_all_expanded(
                                 // recur through `macroexpand_all' on the
                                 // whole `(lambda ...)' — `macroexpand-1'
                                 // would just re-wrap it in `function'.
-                                let head = 2;
-                                let Some(litems) = macroexpand_list_to_vec(i, &items[1])? else {
-                                    if let Some(tail) =
-                                        macroexpand_dotted_tail(i, &items[1])?
-                                    {
-                                        return Err(i.wrong_type_mut("listp", &tail));
-                                    }
+                                let Value::Cons(arg_cell) = lambda_tail else {
                                     return Ok(expanded);
                                 };
-                                if litems.len() < head {
-                                    return Ok(expanded);
+                                if source_lambda
+                                    && let Some(tail) =
+                                        macroexpand_dotted_tail(i, &items[1])?
+                                {
+                                    return Err(i.wrong_type_mut("listp", &tail));
                                 }
-                                let bound = binder_syms(i, &litems[head - 1])?;
-                                let body = macroexpand_list_tail(i, &items[1], head)?;
+                                let (arglist, body) =
+                                    crate::lisp::eval::cons_parts(i, &arg_cell)?;
+                                let bound = binder_syms(i, &arglist)?;
                                 let body = macroexpand_live_filtered_body(
                                     i, &body, env_id, &env, sm, &bound, false,
                                 )?;
                                 let lambda = macroexpand_prepend_preserving(
                                     i,
                                     &items[1],
-                                    litems[..head].to_vec(),
+                                    vec![head, arglist],
                                     body,
                                 )?;
                                 return macroexpand_prepend_preserving(
