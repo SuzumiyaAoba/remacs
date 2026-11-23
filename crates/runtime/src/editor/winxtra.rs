@@ -2154,7 +2154,7 @@ fn window_resize_pixelwise(
     let (grow, shrink, eligible) =
         resize_caps_pixelwise(i, &target, &kids, horizontal, ignore, char_size)?;
     let magnitude = delta.abs();
-    let pool = if delta > 0 {
+    let mut pool = if delta > 0 {
         grow
     } else {
         eligible
@@ -2179,21 +2179,30 @@ fn window_resize_pixelwise(
     let last = eligible.last().cloned();
     for sibling in &eligible {
         let size = pixelwise_window_size(sibling, horizontal, char_size);
+        let capacity = if delta > 0 {
+            (size - pixelwise_window_minimum(i, sibling, horizontal, ignore)).max(0)
+        } else {
+            size
+        };
         let mut sibling_delta = if pool > 0 {
+            let share = need * capacity / pool;
             if delta > 0 {
-                let minimum = pixelwise_window_minimum(i, sibling, horizontal, ignore);
-                let slack = (size - minimum).max(0);
-                -(need * slack / pool).min(slack).min(need)
+                -share.min(capacity).min(need)
             } else {
-                (need * size / pool).min(need)
+                share.min(need)
             }
         } else {
             0
         };
         if last.as_ref().is_some_and(|last| Rc::ptr_eq(last, sibling)) {
-            sibling_delta = if delta > 0 { -need } else { need };
+            sibling_delta = if delta > 0 {
+                -need.min(capacity)
+            } else {
+                need
+            };
         }
         need -= sibling_delta.abs();
+        pool = pool.saturating_sub(capacity);
         let mut sibling = sibling.borrow_mut();
         if horizontal {
             sibling.pixelwise_width_adjustment += sibling_delta;
