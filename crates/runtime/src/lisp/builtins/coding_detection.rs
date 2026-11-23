@@ -451,7 +451,7 @@ fn detect_internal(
             continue;
         }
         let plist = misc::f_coding_system_plist(i, vec![value.clone()].into())?;
-        let selected = Value::Sym(i.intern(&name));
+        let selected = super::misc::coding_alias_symbol(i, &name);
         let resolved = misc::coding_alias_group(i, &selected)
             .and_then(|group| group.first().cloned())
             .unwrap_or_else(|| name.clone());
@@ -662,7 +662,7 @@ fn detect_internal(
             } else {
                 name.clone()
             };
-            Value::Sym(i.intern(&name))
+            super::misc::coding_alias_symbol(i, &name)
         })
         .collect();
     Ok(if highest {

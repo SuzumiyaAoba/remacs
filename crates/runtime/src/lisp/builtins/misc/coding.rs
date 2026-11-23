@@ -1496,7 +1496,7 @@ pub(crate) fn add_coding_system_symbol_to_list(i: &mut Interp, sid: SymId) -> Ev
     Ok(Value::Nil)
 }
 
-fn coding_alias_symbol(i: &mut Interp, name: &str) -> Value {
+pub(crate) fn coding_alias_symbol(i: &mut Interp, name: &str) -> Value {
     let alias = i
         .extra_coding_alias_symbols
         .iter()
@@ -1510,7 +1510,7 @@ fn coding_alias_symbol(i: &mut Interp, name: &str) -> Value {
     });
     coding_system
         .map(Value::Sym)
-        .unwrap_or_else(|| Value::Sym(i.intern(name)))
+        .unwrap_or_else(|| Value::Sym(i.q(name)))
 }
 
 pub(super) fn f_coding_system_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
