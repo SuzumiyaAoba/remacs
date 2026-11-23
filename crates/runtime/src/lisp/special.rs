@@ -256,15 +256,11 @@ fn sf_cond(i: &mut Interp, args: Value) -> EvalResult {
     // order. Keep the current cell's Rc alive across eval: a test can
     // unlink this cell by mutating an earlier clause-list cell.
     let mut cur = args;
-    let mut seen = FxHashSet::default();
     let mut until_quit = 1024usize;
     loop {
         match cur.clone() {
             Value::Nil => return Ok(Value::Nil),
             Value::Cons(cell) => {
-                if !seen.insert(Rc::as_ptr(&cell) as usize) {
-                    return Err(i.signal_data(sym::CIRCULAR_LIST, vec![cur.clone()]));
-                }
                 let clause = cons_parts(i, &cell)?.0;
                 // GNU's Fcond XCARs each clause: a non-list clause
                 // signals `wrong-type-argument' (listp CLAUSE).
