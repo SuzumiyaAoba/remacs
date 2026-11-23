@@ -1141,6 +1141,15 @@ pub fn run_gui_with_dump(
                                             initial_icon_type.as_ref(),
                                         ));
                                     }
+                                    if skip_taskbar_changed {
+                                        update_native_skip_taskbar(window, skip_taskbar);
+                                    }
+                                    if sticky_changed {
+                                        update_native_sticky(window, sticky);
+                                    }
+                                    if shaded_changed {
+                                        update_native_shaded(window, shaded);
+                                    }
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
                                     view.set_borders_respect_alpha_background(
