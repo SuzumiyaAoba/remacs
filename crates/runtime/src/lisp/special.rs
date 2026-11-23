@@ -983,14 +983,10 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
     // Dynamic context (nil interpreter environment): bare `(defvar SYM)'
     // "does nothing", per GNU's docstring — all bindings are dynamic
     // anyway, and the var does not become `special-variable-p'.
-    if let Value::Str(s) = doc {
+    if !doc.is_nil() {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
-        let doc = s
-            .try_borrow()
-            .map(|text| (*text).clone())
-            .map_err(|_| i.error("Cannot inspect a mutably borrowed docstring"))?;
-        i.put_prop(sid, vd, Value::string(doc));
+        i.put_prop(sid, vd, doc);
     }
     // GNU eval.c `defvar' LOADHIST_ATTACHes the bare symbol — this is
     // what records `(defvar SYM)' inside compiled `byte-code' forms,
@@ -1021,14 +1017,10 @@ fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
     check_dynamic_variable_declaration(i, sid, &name_v)?;
     i.obarray.symbol_mut(sid).special = true;
     i.set_symbol_default_as(sid, v, &name_v)?;
-    if let Value::Str(s) = doc {
+    if !doc.is_nil() {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
-        let doc = s
-            .try_borrow()
-            .map(|text| (*text).clone())
-            .map_err(|_| i.error("Cannot inspect a mutably borrowed docstring"))?;
-        i.put_prop(sid, vd, Value::string(doc));
+        i.put_prop(sid, vd, doc);
     }
     let rlv = i.q("risky-local-variable");
     i.put_prop(sid, rlv, Value::t());

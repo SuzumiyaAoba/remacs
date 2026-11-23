@@ -1219,15 +1219,7 @@ fn f_defvar_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // evaluated arguments — same cell-shape semantics as `defvar'
     // (eval.c `defvar' with eval=false).
     let id = want_sym(i, &args[0])?;
-    let docstring = match args.get(2) {
-        Some(Value::Str(string)) => Some(
-            string
-                .try_borrow()
-                .map(|text| (*text).clone())
-                .map_err(|_| i.error("Cannot inspect a mutably borrowed variable docstring"))?,
-        ),
-        _ => None,
-    };
+    let docstring = args.get(2).filter(|doc| !doc.is_nil()).cloned();
     crate::lisp::special::check_dynamic_variable_declaration(i, id, &args[0])?;
     i.obarray.symbol_mut(id).special = true;
     // GNU `defvar': install INIT only when the DEFAULT binding is void.
@@ -1244,7 +1236,7 @@ fn f_defvar_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if let Some(docstring) = docstring {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
-        i.put_prop(id, vd, Value::string(docstring));
+        i.put_prop(id, vd, docstring);
     }
     Ok(args[0].clone())
 }
@@ -1253,22 +1245,14 @@ fn f_defconst_1(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     // (defconst-1 SYM INITVALUE &optional DOCSTRING): defconst with
     // evaluated arguments — always sets the default.
     let id = want_sym(i, &args[0])?;
-    let docstring = match args.get(2) {
-        Some(Value::Str(string)) => Some(
-            string
-                .try_borrow()
-                .map(|text| (*text).clone())
-                .map_err(|_| i.error("Cannot inspect a mutably borrowed variable docstring"))?,
-        ),
-        _ => None,
-    };
+    let docstring = args.get(2).filter(|doc| !doc.is_nil()).cloned();
     crate::lisp::special::check_dynamic_variable_declaration(i, id, &args[0])?;
     i.obarray.symbol_mut(id).special = true;
     i.set_symbol_default_as(id, args[1].clone(), &args[0])?;
     if let Some(docstring) = docstring {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
-        i.put_prop(id, vd, Value::string(docstring));
+        i.put_prop(id, vd, docstring);
     }
     let rlv = i.q("risky-local-variable");
     i.put_prop(id, rlv, Value::t());
