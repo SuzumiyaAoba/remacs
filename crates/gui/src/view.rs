@@ -4108,97 +4108,26 @@ impl Render for EditorView {
                                     .get(y)
                                     .filter(|cells| !cells.is_empty())
                                     .or_else(|| grid.attrs.get(y));
-                                let bidi_disabled_ranges = grid
-                                    .bidi_disabled_ranges
-                                    .iter()
-                                    .filter(|range| range.row == y)
-                                    .copied()
-                                    .collect::<Vec<_>>();
-                                let bidi_paragraph_ranges = grid
-                                    .bidi_paragraph_ranges
-                                    .iter()
-                                    .filter(|range| range.row == y)
-                                    .copied()
-                                    .collect::<Vec<_>>();
-                                let mut shaping_text = String::with_capacity(
-                                    row.len()
-                                        + bidi_disabled_ranges.len() * 12
-                                        + bidi_paragraph_ranges.len() * 6,
-                                );
+                                let bidi_layout = input::bidi_shaping_text(&grid, y, row);
+                                let shaping_text = bidi_layout.text;
+                                let style_characters = bidi_layout.style_characters;
+                                let mut styled_text = String::with_capacity(shaping_text.len());
                                 let mut styled_spans = Vec::new();
-                                let mut open_range = 0;
-                                let mut close_range = 0;
-                                let mut open_paragraph = 0;
-                                let mut close_paragraph = 0;
-                                for (x, (byte, ch)) in row.char_indices().enumerate() {
-                                    let st =
-                                        cells.and_then(|c| c.get(x)).copied().unwrap_or_default();
-                                    while bidi_paragraph_ranges
-                                        .get(open_paragraph)
-                                        .is_some_and(|range| range.start == byte)
-                                    {
-                                        let marker =
-                                            match bidi_paragraph_ranges[open_paragraph].direction {
-                                                GridBidiDirection::LeftToRight => {
-                                                    BIDI_PARAGRAPH_LTR_OPEN
-                                                }
-                                                GridBidiDirection::RightToLeft => {
-                                                    BIDI_PARAGRAPH_RTL_OPEN
-                                                }
-                                            };
-                                        append_styled_piece(
-                                            &mut shaping_text,
-                                            &mut styled_spans,
-                                            marker,
-                                            st,
-                                        );
-                                        open_paragraph += 1;
-                                    }
-                                    while bidi_disabled_ranges
-                                        .get(open_range)
-                                        .is_some_and(|range| range.start == byte)
-                                    {
-                                        append_styled_piece(
-                                            &mut shaping_text,
-                                            &mut styled_spans,
-                                            BIDI_DISABLED_OPEN,
-                                            st,
-                                        );
-                                        open_range += 1;
-                                    }
-                                    let mut encoded = [0; 4];
+                                for (layout_byte, character) in shaping_text.char_indices() {
+                                    let style_index = style_characters[layout_byte];
+                                    let style = cells
+                                        .and_then(|styles| styles.get(style_index))
+                                        .copied()
+                                        .unwrap_or_default();
+                                    let end = layout_byte + character.len_utf8();
                                     append_styled_piece(
-                                        &mut shaping_text,
+                                        &mut styled_text,
                                         &mut styled_spans,
-                                        ch.encode_utf8(&mut encoded),
-                                        st,
+                                        &shaping_text[layout_byte..end],
+                                        style,
                                     );
-                                    let end = byte + ch.len_utf8();
-                                    while bidi_disabled_ranges
-                                        .get(close_range)
-                                        .is_some_and(|range| range.end == end)
-                                    {
-                                        append_styled_piece(
-                                            &mut shaping_text,
-                                            &mut styled_spans,
-                                            BIDI_DISABLED_CLOSE,
-                                            st,
-                                        );
-                                        close_range += 1;
-                                    }
-                                    while bidi_paragraph_ranges
-                                        .get(close_paragraph)
-                                        .is_some_and(|range| range.end == end)
-                                    {
-                                        append_styled_piece(
-                                            &mut shaping_text,
-                                            &mut styled_spans,
-                                            BIDI_PARAGRAPH_CLOSE,
-                                            st,
-                                        );
-                                        close_paragraph += 1;
-                                    }
                                 }
+                                debug_assert_eq!(styled_text, shaping_text);
                                 let mut runs: Vec<TextRun> = Vec::new();
                                 let mut font_sizes = Vec::new();
                                 let mut push_run =

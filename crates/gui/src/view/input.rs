@@ -8,16 +8,17 @@ use std::{
 };
 
 use super::{
-    EditorView, FG, FONT_SIZE, GuiEvent, LINE_HEIGHT, grid_row_height, grid_row_height_for_cell,
-    grid_row_top, grid_row_top_for_cell,
+    BIDI_DISABLED_CLOSE, BIDI_DISABLED_OPEN, BIDI_PARAGRAPH_CLOSE, BIDI_PARAGRAPH_LTR_OPEN,
+    BIDI_PARAGRAPH_RTL_OPEN, EditorView, FG, FONT_SIZE, GuiEvent, LINE_HEIGHT, grid_row_height,
+    grid_row_height_for_cell, grid_row_top, grid_row_top_for_cell,
 };
 use gpui::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, font, point, px,
     rgb, size,
 };
 use remacs_runtime::frontend::{
-    CellStyle, Grid, GridInput, GridPointerShape, GridWindowTextArea, MouseArea, MouseObject,
-    MousePosition, MOUSE_POSITION_NO_BUFFER,
+    CellStyle, Grid, GridBidiDirection, GridInput, GridPointerShape, GridWindowTextArea, MouseArea,
+    MouseObject, MousePosition, MOUSE_POSITION_NO_BUFFER,
 };
 
 pub(super) fn mouse_timestamp_ms() -> i128 {
@@ -443,8 +444,12 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     };
     let area_hit = fringe_area_hit(grid, row, column).or_else(|| margin_area_hit(grid, row, column));
     let hit_column = area_hit.map_or(column, |(_, column)| column);
-    let line = grid.rows.get(row)?;
-    let byte = shape_grid_row(grid, row, window, line).closest_index_for_x(point.x);
+    let row_text = grid.rows.get(row)?;
+    let (line, source_offsets) = shape_grid_row_with_bidi(grid, row, window, row_text);
+    let layout_byte = line
+        .closest_index_for_x(point.x)
+        .min(source_offsets.len().saturating_sub(1));
+    let byte = source_offsets.get(layout_byte).copied()?;
     let mapped = input.hit_test_position(row, hit_column, byte)?;
     let area = area_hit
         .map(|(area, _)| area)
@@ -767,8 +772,13 @@ pub(super) fn void_text_area_at_point(
     let Some(line) = grid.rows.get(row) else {
         return true;
     };
-    let layout = shape_grid_row(grid, row, window, line);
-    let byte = layout.closest_index_for_x(point.x);
+    let (layout, source_offsets) = shape_grid_row_with_bidi(grid, row, window, line);
+    let layout_byte = layout
+        .closest_index_for_x(point.x)
+        .min(source_offsets.len().saturating_sub(1));
+    let Some(byte) = source_offsets.get(layout_byte).copied() else {
+        return true;
+    };
     if !(source_start..=source_end).contains(&byte) {
         return false;
     }
@@ -817,7 +827,11 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
         None => grid_row_at_y(grid, scrolled_y),
     };
     let line = grid.rows.get(row)?;
-    let byte = shape_grid_row(grid, row, window, line).closest_index_for_x(point.x);
+    let (layout, source_offsets) = shape_grid_row_with_bidi(grid, row, window, line);
+    let layout_byte = layout
+        .closest_index_for_x(point.x)
+        .min(source_offsets.len().saturating_sub(1));
+    let byte = source_offsets.get(layout_byte).copied()?;
     let (source_start, source_end) = input.hit_test_source_range(row, column)?;
     (source_start..=source_end)
         .contains(&byte)
@@ -922,17 +936,146 @@ fn grid_font_at_byte(
     (font, size.unwrap_or(base_size))
 }
 
-pub(super) fn shape_grid_row(
+pub(super) struct BidiShapingText {
+    pub text: String,
+    /// Maps each shaped-text byte boundary back to its source row byte.
+    pub source_offsets: Vec<usize>,
+    /// Maps each shaped-text byte to the source character style index.
+    pub style_characters: Vec<usize>,
+}
+
+fn append_bidi_layout_piece(
+    text: &mut String,
+    source_offsets: &mut Vec<usize>,
+    style_characters: &mut Vec<usize>,
+    piece: &str,
+    source_byte: usize,
+    style_character: usize,
+) {
+    text.push_str(piece);
+    source_offsets.extend(std::iter::repeat(source_byte).take(piece.len()));
+    style_characters.extend(std::iter::repeat(style_character).take(piece.len()));
+}
+
+pub(super) fn bidi_shaping_text(grid: &Grid, row_index: usize, row: &str) -> BidiShapingText {
+    let disabled_ranges = grid
+        .bidi_disabled_ranges
+        .iter()
+        .filter(|range| range.row == row_index)
+        .copied()
+        .collect::<Vec<_>>();
+    let paragraph_ranges = grid
+        .bidi_paragraph_ranges
+        .iter()
+        .filter(|range| range.row == row_index)
+        .copied()
+        .collect::<Vec<_>>();
+    let mut text = String::with_capacity(
+        row.len() + disabled_ranges.len() * 12 + paragraph_ranges.len() * 6,
+    );
+    let mut source_offsets = vec![0];
+    let mut style_characters = Vec::new();
+    let mut open_disabled = 0;
+    let mut close_disabled = 0;
+    let mut open_paragraph = 0;
+    let mut close_paragraph = 0;
+    for (style_character, (byte, character)) in row.char_indices().enumerate() {
+        while paragraph_ranges
+            .get(open_paragraph)
+            .is_some_and(|range| range.start == byte)
+        {
+            let marker = match paragraph_ranges[open_paragraph].direction {
+                GridBidiDirection::LeftToRight => BIDI_PARAGRAPH_LTR_OPEN,
+                GridBidiDirection::RightToLeft => BIDI_PARAGRAPH_RTL_OPEN,
+            };
+            append_bidi_layout_piece(
+                &mut text,
+                &mut source_offsets,
+                &mut style_characters,
+                marker,
+                byte,
+                style_character,
+            );
+            open_paragraph += 1;
+        }
+        while disabled_ranges
+            .get(open_disabled)
+            .is_some_and(|range| range.start == byte)
+        {
+            append_bidi_layout_piece(
+                &mut text,
+                &mut source_offsets,
+                &mut style_characters,
+                BIDI_DISABLED_OPEN,
+                byte,
+                style_character,
+            );
+            open_disabled += 1;
+        }
+        let mut encoded = [0; 4];
+        let source = character.encode_utf8(&mut encoded);
+        append_bidi_layout_piece(
+            &mut text,
+            &mut source_offsets,
+            &mut style_characters,
+            source,
+            byte,
+            style_character,
+        );
+        let end = byte + character.len_utf8();
+        source_offsets[text.len()] = end;
+        while disabled_ranges
+            .get(close_disabled)
+            .is_some_and(|range| range.end == end)
+        {
+            append_bidi_layout_piece(
+                &mut text,
+                &mut source_offsets,
+                &mut style_characters,
+                BIDI_DISABLED_CLOSE,
+                end,
+                style_character,
+            );
+            close_disabled += 1;
+        }
+        while paragraph_ranges
+            .get(close_paragraph)
+            .is_some_and(|range| range.end == end)
+        {
+            append_bidi_layout_piece(
+                &mut text,
+                &mut source_offsets,
+                &mut style_characters,
+                BIDI_PARAGRAPH_CLOSE,
+                end,
+                style_character,
+            );
+            close_paragraph += 1;
+        }
+    }
+    BidiShapingText {
+        text,
+        source_offsets,
+        style_characters,
+    }
+}
+
+fn shape_grid_row_layout(
     grid: &Grid,
     row_index: usize,
     window: &mut Window,
-    row: &str,
+    source_row: &str,
+    layout_text: &str,
+    style_characters: Option<&[usize]>,
 ) -> gpui::ShapedLine {
     let (base_font, base_size) = grid_base_font(grid, window);
     let mut runs = Vec::<gpui::TextRun>::new();
     let mut font_sizes = Vec::new();
     let mut previous_style = None;
-    for (character, (_, ch)) in row.char_indices().enumerate() {
+    for (character_index, (layout_byte, ch)) in layout_text.char_indices().enumerate() {
+        let character = style_characters
+            .and_then(|characters| characters.get(layout_byte).copied())
+            .unwrap_or(character_index);
         let style = grid_style_at_char(grid, row_index, character);
         if previous_style == Some(style) {
             if let Some(run) = runs.last_mut() {
@@ -970,15 +1113,46 @@ pub(super) fn shape_grid_row(
         font_sizes.push(None);
     }
     let line = window.text_system().shape_line_with_font_sizes(
-        row.to_owned().into(),
+        layout_text.to_owned().into(),
         base_size,
         &runs,
         &font_sizes,
         None,
     );
-    super::align_zwj_glyph_positions(line, row, cell_width, |byte_index| {
-        byte_index
-    })
+    if style_characters.is_some() {
+        super::align_zwj_glyph_positions(line, source_row, cell_width, |byte_index| {
+            super::grid_layout_index(grid, row_index, byte_index)
+        })
+    } else {
+        super::align_zwj_glyph_positions(line, layout_text, cell_width, |byte_index| byte_index)
+    }
+}
+
+pub(super) fn shape_grid_row(
+    grid: &Grid,
+    row_index: usize,
+    window: &mut Window,
+    row: &str,
+) -> gpui::ShapedLine {
+    shape_grid_row_layout(grid, row_index, window, row, row, None)
+}
+
+pub(super) fn shape_grid_row_with_bidi(
+    grid: &Grid,
+    row_index: usize,
+    window: &mut Window,
+    row: &str,
+) -> (gpui::ShapedLine, Vec<usize>) {
+    let layout = bidi_shaping_text(grid, row_index, row);
+    let shaped = shape_grid_row_layout(
+        grid,
+        row_index,
+        window,
+        row,
+        &layout.text,
+        Some(&layout.style_characters),
+    );
+    (shaped, layout.source_offsets)
 }
 
 impl TextInputState {
