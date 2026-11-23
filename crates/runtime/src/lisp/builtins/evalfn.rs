@@ -1587,6 +1587,23 @@ fn macroexpand_all_expanded(
             // is only discarded here, which also pollutes the
             // REMACS_BT_ERR log.)
             let Some(items) = macroexpand_list_to_vec(i, &expanded)? else {
+                if i.sym_is(&car, sym::SETQ) {
+                    let mut tail = cdr;
+                    let mut seen = FxHashSet::default();
+                    loop {
+                        match &tail {
+                            Value::Nil => break,
+                            Value::Cons(cell) => {
+                                if !seen.insert(Rc::as_ptr(cell) as usize) {
+                                    break;
+                                }
+                                let next = crate::lisp::eval::cons_parts(i, cell)?.1;
+                                tail = next;
+                            }
+                            _ => return Err(i.wrong_type_mut("listp", &tail)),
+                        }
+                    }
+                }
                 if i.sym_id(&car).is_none() {
                     return Ok(expanded);
                 }
