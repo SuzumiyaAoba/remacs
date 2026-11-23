@@ -2561,6 +2561,12 @@ impl EditorView {
         true
     }
 
+    pub(super) fn focus_on_map(&self, window: &mut Window, focus_on_map: bool) {
+        if focus_on_map && !self.no_accept_focus.get() {
+            self.focus.focus(window);
+        }
+    }
+
     pub(super) fn flash_bell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.bell_flash_generation = self.bell_flash_generation.wrapping_add(1);
         let generation = self.bell_flash_generation;

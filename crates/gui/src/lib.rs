@@ -579,9 +579,6 @@ pub fn run_gui_with_dump(
             )
         })
         .unwrap_or(size(px(960.0), px(640.0)));
-    let initial_focus_on_map = initial_frame_size
-        .map(|frame| !frame.no_focus_on_map && !frame.no_accept_focus)
-        .unwrap_or(true);
     let initial_no_accept_focus = initial_frame_size.is_some_and(|frame| frame.no_accept_focus);
     let initial_minimum_cells = initial_frame_size
         .map(|frame| (frame.min_width, frame.min_height))
@@ -709,7 +706,10 @@ pub fn run_gui_with_dump(
         let primary_window = match cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(initial_window_bounds)),
-                focus: initial_focus_on_map,
+                // Startup arguments can change no-focus-on-map after the
+                // initial geometry snapshot. Defer activation until the first
+                // post-startup frame snapshot supplies the final parameter.
+                focus: false,
                 window_min_size: initial_min_size,
                 position_specified: initial_frame_size
                     .is_some_and(|frame| frame.has_position_parameter),
@@ -726,9 +726,6 @@ pub fn run_gui_with_dump(
                 update_native_sticky(window, initial_sticky);
                 update_native_shaded(window, initial_shaded);
                 update_native_minimum_size(window, initial_min_size);
-                if initial_focus_on_map {
-                    cx.activate(false);
-                }
                 cx.new(|cx| {
                     let mut view = build_managed_editor_view(
                         window,
@@ -737,7 +734,7 @@ pub fn run_gui_with_dump(
                         quit_request.clone(),
                         None,
                         None,
-                        initial_focus_on_map,
+                        false,
                         initial_no_accept_focus,
                     );
                     view.set_minimum_cells(initial_minimum_cells.0, initial_minimum_cells.1);
@@ -1208,6 +1205,7 @@ pub fn run_gui_with_dump(
                                         initial_behavior.2.as_deref(),
                                         initial_behavior.3,
                                     );
+                                    view.focus_on_map(window, focus_on_map);
                                     apply_initial_frame_visibility(window, visibility, focus_on_map);
                                 });
                                 apply_pending_frame_order(
