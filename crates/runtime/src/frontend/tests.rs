@@ -2493,3 +2493,43 @@ mod scroll_bar_event_tests;
 
 #[path = "minibuffer_scroll_bar_tests.rs"]
 mod minibuffer_scroll_bar_tests;
+
+#[test]
+fn gui_mouse_autoselect_preserves_the_active_minibuffer_selection() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        "(progn (setq mouse-autoselect-window t) \
+               (setq qa-autoselect-lower (split-window-below)))",
+    )
+    .unwrap();
+    let Value::Window(lower) = i.eval_str("qa-autoselect-lower").unwrap() else {
+        panic!("lower text window");
+    };
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    let (frame_id, minibuffer) = {
+        let frame = frame.borrow();
+        (frame.id, frame.minibuffer.clone().unwrap())
+    };
+    i.minibuf_level = 1;
+    frame.borrow_mut().selected = minibuffer.clone();
+
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    super::dispatch_gui_window_autoselect(
+        &mut i,
+        Some(frame_id),
+        Some(lower.borrow().id),
+        Some((2, 2)),
+        None,
+        &mut keys,
+        &mut arg_mode,
+    )
+    .unwrap();
+
+    assert!(
+        Rc::ptr_eq(&frame.borrow().selected, &minibuffer),
+        "mouse movement over a text window must not unselect the active minibuffer"
+    );
+    assert!(keys.is_empty());
+    assert!(!arg_mode);
+}

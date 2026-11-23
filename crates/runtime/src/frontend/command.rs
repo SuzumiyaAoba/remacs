@@ -1789,8 +1789,22 @@ fn dispatch_gui_window_autoselect(
         return Ok(());
     };
 
-    if crate::editor::sel_window(i).is_some_and(|selected| std::rc::Rc::ptr_eq(&selected, &window))
-    {
+    let selected = crate::editor::sel_window(i);
+    let active_minibuffer = if i.minibuf_level > 0 {
+        i.selected_frame
+            .as_ref()
+            .and_then(|frame| frame.borrow().minibuffer.clone())
+    } else {
+        None
+    };
+    if let (Some(selected), Some(minibuffer)) = (selected.as_ref(), active_minibuffer.as_ref()) {
+        if std::rc::Rc::ptr_eq(selected, minibuffer) && !std::rc::Rc::ptr_eq(minibuffer, &window) {
+            let cancel = Value::Sym(i.q("mouse-autoselect-window-cancel"));
+            let _ = i.apply(&cancel, vec![Value::t()]);
+            return Ok(());
+        }
+    }
+    if selected.is_some_and(|selected| std::rc::Rc::ptr_eq(&selected, &window)) {
         let cancel = Value::Sym(i.q("mouse-autoselect-window-cancel"));
         let _ = i.apply(&cancel, vec![Value::t()]);
         return Ok(());
