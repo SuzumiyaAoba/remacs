@@ -3535,6 +3535,11 @@ fn dispatch_text_through_input_method(
     i.command_key_start = 0;
 
     for character in text.chars() {
+        // Record the GUI input character before the input method expands it
+        // into events.  Those events go through
+        // `dispatch_key_core_inner` with COMMAND_EVENT set and are not
+        // recorded there.
+        crate::editor::record_recent_input_event(i, Value::Int(character as i128));
         let result = i.apply(function, vec![Value::Int(character as i128)]);
         let output = match result {
             Ok(output) => output,
