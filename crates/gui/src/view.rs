@@ -6436,13 +6436,27 @@ fn paint_grid_row_at(
             if !style.overline {
                 continue;
             }
+            let byte_end = byte + ch.len_utf8();
             let start = grid_line_x(grid, row, line, byte);
-            let end = grid_line_x(grid, row, line, byte + ch.len_utf8());
+            let end = grid_line_x(grid, row, line, byte_end);
             let (left, width) = if end >= start {
                 (start, end - start)
             } else {
                 (end, start - end)
             };
+            let clip = grid_run_window_owner(grid, row, line, cell_width, byte, byte_end)
+                .and_then(|window_id| {
+                    grid_run_window_clip(
+                        grid,
+                        row,
+                        window_id,
+                        bounds,
+                        cell_width,
+                        paint_line_height,
+                        byte,
+                        byte_end,
+                    )
+                });
             if width > px(0.0) {
                 let overline_y = overline_y_for_byte(
                     origin.y,
@@ -6451,11 +6465,17 @@ fn paint_grid_row_at(
                     byte,
                     window,
                 );
-                window.paint_quad(fill(
+                let Some(rect) = clip_rect_to_window(
                     Bounds {
                         origin: point(bounds.left() + left, overline_y),
                         size: size(width, px(1.0)),
                     },
+                    clip.as_ref(),
+                ) else {
+                    continue;
+                };
+                window.paint_quad(fill(
+                    rect,
                     overline_color(
                         style,
                         default_background,
@@ -6713,21 +6733,48 @@ fn paint_vscroll_regions(
                         if !style.overline {
                             continue;
                         }
+                        let byte_end = byte + ch.len_utf8();
                         let start = grid_line_x(grid, row, line, byte);
-                        let end = grid_line_x(grid, row, line, byte + ch.len_utf8());
+                        let end = grid_line_x(grid, row, line, byte_end);
                         let (left, width) = if end >= start {
                             (start, end - start)
                         } else {
                             (end, start - end)
                         };
+                        let clip = grid_run_window_owner(
+                            grid,
+                            row,
+                            line,
+                            cell_width,
+                            byte,
+                            byte_end,
+                        )
+                        .and_then(|window_id| {
+                            grid_run_window_clip(
+                                grid,
+                                row,
+                                window_id,
+                                bounds,
+                                cell_width,
+                                line_height,
+                                byte,
+                                byte_end,
+                            )
+                        });
                         if width > px(0.0) {
                             let overline_y =
                                 overline_y_for_byte(origin.y, line_height, line, byte, window);
-                            window.paint_quad(fill(
+                            let Some(rect) = clip_rect_to_window(
                                 Bounds {
                                     origin: point(bounds.left() + left, overline_y),
                                     size: size(width, px(1.0)),
                                 },
+                                clip.as_ref(),
+                            ) else {
+                                continue;
+                            };
+                            window.paint_quad(fill(
+                                rect,
                                 overline_color(
                                     *style,
                                     default_background,
@@ -6839,7 +6886,7 @@ fn paint_grid_compositions(
 
 /// CellStyle → (foreground, background) for gpui; `:inverse-video'
 /// swaps the two (default palette entries stand in for unset sides).
-fn box_window_owner(
+fn grid_run_window_owner(
     grid: &Grid,
     row: usize,
     line: &ShapedLine,
@@ -6890,7 +6937,7 @@ fn box_window_owner(
         .map(|area| area.window_id)
 }
 
-fn box_window_clip(
+fn grid_run_window_clip(
     grid: &Grid,
     row: usize,
     window_id: usize,
@@ -6938,6 +6985,31 @@ fn box_window_clip(
     );
     (bottom > top).then_some(Bounds {
         origin: point(bounds.left() + left, bounds.top() + top),
+        size: size(right - left, bottom - top),
+    })
+}
+
+fn clip_rect_to_window(
+    rect: Bounds<Pixels>,
+    clip: Option<&Bounds<Pixels>>,
+) -> Option<Bounds<Pixels>> {
+    let (left, top, right, bottom) = if let Some(clip) = clip {
+        (
+            rect.left().max(clip.left()),
+            rect.top().max(clip.top()),
+            (rect.origin.x + rect.size.width).min(clip.origin.x + clip.size.width),
+            (rect.origin.y + rect.size.height).min(clip.origin.y + clip.size.height),
+        )
+    } else {
+        (
+            rect.left(),
+            rect.top(),
+            rect.origin.x + rect.size.width,
+            rect.origin.y + rect.size.height,
+        )
+    };
+    (right > left && bottom > top).then_some(Bounds {
+        origin: point(left, top),
         size: size(right - left, bottom - top),
     })
 }
@@ -6999,7 +7071,7 @@ fn paint_face_boxes(
             continue;
         };
         let end = byte + character.len_utf8();
-        let window_id = box_window_owner(grid, row_index, line, cell_width, byte, end);
+        let window_id = grid_run_window_owner(grid, row_index, line, cell_width, byte, end);
         match &mut current {
             Some((active, fg, bg, _, active_end, active_window_id))
                 if *active == box_style
@@ -7136,7 +7208,7 @@ fn paint_box_run(
     };
 
     let clip = window_id.and_then(|window_id| {
-        box_window_clip(
+        grid_run_window_clip(
             grid,
             row_index,
             window_id,
@@ -7148,23 +7220,17 @@ fn paint_box_run(
         )
     });
     let mut paint_rect = |x: Pixels, y: Pixels, width: Pixels, height: Pixels, color: u32| {
-        let (x, y, width, height) = if let Some(clip) = clip.as_ref() {
-            let left = x.max(clip.left());
-            let top = y.max(clip.top());
-            let right = (x + width).min(clip.origin.x + clip.size.width);
-            let bottom = (y + height).min(clip.origin.y + clip.size.height);
-            (left, top, right - left, bottom - top)
-        } else {
-            (x, y, width, height)
-        };
         if width > px(0.0) && height > px(0.0) {
-            window.paint_quad(fill(
+            let Some(rect) = clip_rect_to_window(
                 Bounds {
                     origin: point(x, y),
                     size: size(width, height),
                 },
-                rgb(color),
-            ));
+                clip.as_ref(),
+            ) else {
+                return;
+            };
+            window.paint_quad(fill(rect, rgb(color)));
         }
     };
     paint_rect(
