@@ -940,6 +940,9 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
     let sid = i.var_alias_target(sid);
     let init = cadr(i, &args)?;
     let has_init = !cdr(i, &args)?.is_nil();
+    // GNU reads the optional docstring before evaluating INIT; the initializer
+    // can mutate the live argument spine.
+    let doc = nth_arg(i, &args, 2)?;
     if has_init {
         // `(defvar SYM INIT ...)': GNU marks the symbol permanently
         // special (`declared_special') and installs the default only if
@@ -966,7 +969,6 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
     // Dynamic context (nil interpreter environment): bare `(defvar SYM)'
     // "does nothing", per GNU's docstring — all bindings are dynamic
     // anyway, and the var does not become `special-variable-p'.
-    let doc = nth_arg(i, &args, 2)?;
     if let Value::Str(s) = doc {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
@@ -994,6 +996,9 @@ fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
         Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &name_v)),
     };
+    // GNU captures the docstring from the original form before INIT can
+    // rewrite its third argument cell.
+    let doc = nth_arg(i, &args, 2)?;
     // GNU Fdefconst_1: special + set_default + docstring, plus
     // `risky-local-variable t'.  Constancy is NOT enforced at runtime
     // ("not actually enforced by Emacs Lisp") — only nil, t and
@@ -1002,7 +1007,6 @@ fn sf_defconst(i: &mut Interp, args: Value) -> EvalResult {
     i.obarray.symbol_mut(sid).special = true;
     let v = eval_argument(i, &args, 1)?;
     i.set_symbol_default_as(sid, v, &name_v)?;
-    let doc = nth_arg(i, &args, 2)?;
     if let Value::Str(s) = doc {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
