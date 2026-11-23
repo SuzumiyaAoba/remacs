@@ -17,6 +17,22 @@ impl Interp {
         for &(name, conditions) in conditions::CORE {
             put(self, name, conditions);
         }
+        // Keep the built-in JSON condition symbols available to native
+        // parsers after Lisp removes their names from the obarray.
+        for name in [
+            "json-error",
+            "json-parse-error",
+            "json-end-of-file",
+            "json-escape-sequence-error",
+            "json-trailing-content",
+            "json-invalid-surrogate-error",
+            "json-number-out-of-range-error",
+            "json-object-too-deep",
+            "json-out-of-memory",
+            "json-utf8-decode-error",
+        ] {
+            self.q(name);
+        }
         // Remaining GNU error symbols (fileio.c, keyboard.c, module.c,
         // comp.c, alloc.c, thread.c, xdisp.c, search.c, eval.c, ...).
         for &(name, conds) in conditions::ADDITIONAL {

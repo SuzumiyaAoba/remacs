@@ -161,7 +161,7 @@ fn json_cond_chain(i: &mut Interp, id: u32) {
     };
     let mut chain = vec![Value::Sym(id)];
     for p in parents {
-        chain.push(Value::Sym(i.intern(p)));
+        chain.push(Value::Sym(i.q(p)));
     }
     i.put_prop(id, ec, Value::list(chain));
 }
@@ -226,7 +226,7 @@ impl<'a> Parser<'a> {
         } else {
             consumed as i128 + 1
         };
-        let id = self.i.intern(sym);
+        let id = self.i.q(sym);
         json_cond_chain(self.i, id);
         self.i.signal_data(
             id,
@@ -238,7 +238,7 @@ impl<'a> Parser<'a> {
     /// carrying GNU's (LINE nil POSITION) shape.
     fn err_sym(&mut self, sym: &str) -> PErr {
         let pos = self.pos.saturating_sub(self.base) as i128;
-        let id = self.i.intern(sym);
+        let id = self.i.q(sym);
         json_cond_chain(self.i, id);
         self.i.signal_data(
             id,
@@ -302,7 +302,7 @@ impl<'a> Parser<'a> {
 
     fn err_consumed_as(&mut self, name: &str) -> PErr {
         let pos = self.pos.saturating_sub(self.base) as i128;
-        let id = self.i.intern(name);
+        let id = self.i.q(name);
         json_cond_chain(self.i, id);
         self.i.signal_data(
             id,
