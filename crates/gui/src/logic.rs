@@ -4188,7 +4188,13 @@ impl KeyIo for ChanIo {
             render_grid_with_mouse_position_cached(i, cols, rows, cached, self.mouse_position)
         };
         grid.blink_elapsed_since_input = self.last_input_at.elapsed().as_secs_f64();
-        let grid = Self::echo_grid(grid, cols, rows, text, false, true, true, tab_width);
+        let grid = if i.minibuf_level > 0 {
+            // The renderer already laid out the active minibuffer's wrapped
+            // rows and placed its cursor at the buffer point.
+            grid
+        } else {
+            Self::echo_grid(grid, cols, rows, text, false, true, true, tab_width)
+        };
         self.send_grid(grid)
     }
 
