@@ -679,7 +679,13 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                 position,
                 modifiers,
             } => {
-                dispatch_mouse_movement(i, position, modifiers, &mut keys, &mut arg_mode)?;
+                // GUI drag motion is also reported as MouseMoved. When
+                // track-mouse is enabled, that path already dispatched the
+                // event with the full GUI position; don't dispatch the drag
+                // notification a second time.
+                if !mouse_movement_tracking_enabled(i) {
+                    dispatch_mouse_movement(i, position, modifiers, &mut keys, &mut arg_mode)?;
+                }
             }
             InputEvent::MouseMoved {
                 frame_id,
@@ -3998,7 +4004,7 @@ fn minibuf_loop<T: KeyIo>(
             InputEvent::MouseMovement {
                 position,
                 modifiers,
-            } if single => {
+            } if single && !mouse_movement_tracking_enabled(i) => {
                 return Ok(MinibufInput::Event(mouse_movement_event(
                     i, position, modifiers,
                 )));
