@@ -4335,7 +4335,7 @@ fn minibuf_echo_text(i: &mut Interp, prompt: &EmacsStr) -> EmacsText {
     let after_sym = i.q("after-string");
     let mut overlay_strings: Vec<(&crate::buffer::Overlay, Value, Value)> = Vec::new();
     for ov in &bb.overlays {
-        if ov.buffer.is_none() {
+        if ov.buffer.is_none() || !ov.matches_window(i, &Value::Nil) {
             continue;
         }
         let bs = crate::lisp::eval::plist_get(&ov.plist, before_sym);
