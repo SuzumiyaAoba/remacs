@@ -2118,8 +2118,9 @@ impl Image {
 
     /// Create an image from a format and bytes
     pub fn from_bytes(format: ImageFormat, bytes: Vec<u8>) -> Self {
+        let id = hash(&(format, &bytes));
         Self {
-            id: hash(&bytes),
+            id,
             format,
             bytes,
         }
