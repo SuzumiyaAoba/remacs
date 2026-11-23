@@ -207,6 +207,7 @@ pub(crate) struct WaylandClientState {
     // Output to scale mapping
     outputs: HashMap<ObjectId, Output>,
     in_progress_outputs: HashMap<ObjectId, InProgressOutput>,
+    output_global_names: HashMap<u32, ObjectId>,
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
@@ -454,6 +455,7 @@ impl WaylandClient {
         let mut seat: Option<wl_seat::WlSeat> = None;
         #[allow(clippy::mutable_key_type)]
         let mut in_progress_outputs = HashMap::default();
+        let mut output_global_names = HashMap::default();
         globals.contents().with_list(|list| {
             for global in list {
                 match &global.interface[..] {
@@ -472,7 +474,9 @@ impl WaylandClient {
                             &qh,
                             (),
                         );
-                        in_progress_outputs.insert(output.id(), InProgressOutput::default());
+                        let output_id = output.id();
+                        in_progress_outputs.insert(output_id.clone(), InProgressOutput::default());
+                        output_global_names.insert(global.name, output_id);
                     }
                     _ => {}
                 }
@@ -565,6 +569,7 @@ impl WaylandClient {
             composing: false,
             outputs: HashMap::default(),
             in_progress_outputs,
+            output_global_names,
             windows: HashMap::default(),
             common,
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
@@ -930,15 +935,24 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for WaylandClientStat
                         qh,
                         (),
                     );
-
+                    let output_id = output.id();
                     state
                         .in_progress_outputs
-                        .insert(output.id(), InProgressOutput::default());
+                        .insert(output_id.clone(), InProgressOutput::default());
+                    state.output_global_names.insert(name, output_id);
                 }
                 _ => {}
             },
-            wl_registry::Event::GlobalRemove { name: _ } => {
-                // TODO: handle global removal
+            wl_registry::Event::GlobalRemove { name } => {
+                if let Some(output_id) = state.output_global_names.remove(&name) {
+                    state.outputs.remove(&output_id);
+                    state.in_progress_outputs.remove(&output_id);
+                    let windows = state.windows.values().cloned().collect::<Vec<_>>();
+                    drop(state);
+                    for window in windows {
+                        window.handle_output_removed(&output_id);
+                    }
+                }
             }
             _ => {}
         }

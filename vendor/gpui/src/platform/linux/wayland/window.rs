@@ -369,6 +369,31 @@ impl WaylandWindowStatePtr {
         Rc::ptr_eq(&self.state, &other.state)
     }
 
+    pub fn handle_output_removed(&self, output_id: &ObjectId) {
+        let (scale, update_buffer_scale) = {
+            let mut state = self.state.borrow_mut();
+            state.outputs.remove(output_id);
+            if state
+                .display
+                .as_ref()
+                .is_some_and(|(current_id, _)| current_id == output_id)
+            {
+                state.display = None;
+            }
+            let scale = state.primary_output_scale();
+            let update_buffer_scale =
+                state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE;
+            if update_buffer_scale {
+                state.surface.set_buffer_scale(scale);
+            }
+            (scale, update_buffer_scale)
+        };
+        if update_buffer_scale {
+            self.rescale(scale as f32);
+        }
+        self.frame();
+    }
+
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
         if !state.visibility.can_draw() {
