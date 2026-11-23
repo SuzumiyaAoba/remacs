@@ -1753,6 +1753,11 @@ fn dispatch_gui_window_autoselect(
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) -> io::Result<()> {
+    if i.gui_popup_menu.is_some() {
+        let cancel = Value::Sym(i.q("mouse-autoselect-window-cancel"));
+        let _ = i.apply(&cancel, vec![Value::t()]);
+        return Ok(());
+    }
     let Some(mouse_autoselect_window) = i.q_soft("mouse-autoselect-window") else {
         return Ok(());
     };

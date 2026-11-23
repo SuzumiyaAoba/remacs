@@ -2558,3 +2558,55 @@ fn frame_move_recomputes_cached_mouse_position_from_absolute_coordinates() {
         ))
     );
 }
+
+#[test]
+fn gui_mouse_autoselect_does_not_switch_windows_while_popup_is_active() {
+    let mut i = interp_with_frame("");
+    i.eval_str(
+        "(progn (setq mouse-autoselect-window t) \
+               (setq qa-autoselect-lower (split-window-below)))",
+    )
+    .unwrap();
+    let Value::Window(lower) = i.eval_str("qa-autoselect-lower").unwrap() else {
+        panic!("lower text window");
+    };
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    let (frame_id, selected) = {
+        let frame = frame.borrow();
+        (frame.id, frame.selected.clone())
+    };
+    i.gui_popup_menu = Some(Rc::new(crate::frontend::PopupMenu {
+        id: 1,
+        position: crate::frontend::PopupMenuPosition {
+            frame_id,
+            anchor: crate::frontend::PopupMenuAnchor::Frame,
+            from_event: false,
+            x: 0,
+            y: 0,
+        },
+        entries: Vec::new(),
+        navigation: RefCell::new(crate::frontend::PopupMenuNavigation::default()),
+        scroll_offset: std::cell::Cell::new(0),
+        visible_rows: std::cell::Cell::new(0),
+    }));
+
+    let mut keys = Vec::new();
+    let mut arg_mode = false;
+    super::dispatch_gui_window_autoselect(
+        &mut i,
+        Some(frame_id),
+        Some(lower.borrow().id),
+        Some((2, 2)),
+        None,
+        &mut keys,
+        &mut arg_mode,
+    )
+    .unwrap();
+
+    assert!(
+        Rc::ptr_eq(&frame.borrow().selected, &selected),
+        "mouse movement behind a popup must not change the selected window"
+    );
+    assert!(keys.is_empty());
+    assert!(!arg_mode);
+}
