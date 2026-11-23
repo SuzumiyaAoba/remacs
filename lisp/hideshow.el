@@ -602,8 +602,8 @@ Do not show hidden code or comment blocks when isearch matches inside them"
 (defvar hs-hide-all-non-comment-function nil
   "Function called if non-nil when doing `hs-hide-all' for non-comments.")
 
-(defvar hs-headline nil
-  "Text of the line where a hidden block begins, set during isearch.
+(defvar-local hs-headline nil
+  "Text of a hidden block's headline in this buffer, set during isearch.
 You can display this in the mode line by adding the symbol `hs-headline'
 to the variable `mode-line-format'.  For example:
 
@@ -776,6 +776,7 @@ Skip \"internal\" overlays if `hs-allow-nesting' is non-nil."
             (setq beg (overlay-end ov))
             (delete-overlay ov))))
     (remove-overlays beg end 'invisible 'hs))
+  (hs--update-headline)
   (hs--refresh-indicators beg end))
 
 (defun hs-overlay-at (position)
@@ -885,7 +886,8 @@ Otherwise, return nil."
             (cond (comment-reg (let (hs-allow-nesting)
                                  (hs-discard-overlays beg end)))
                   ((and hs-allow-nesting (setq ov (hs-overlay-at beg)))
-                   (delete-overlay ov))
+                   (delete-overlay ov)
+                   (hs--update-headline))
                   ((not hs-allow-nesting)
                    (hs-discard-overlays beg end)))
             (goto-char end)
@@ -994,6 +996,7 @@ Intended to be used in `modification-hooks', `insert-in-front-hooks' and
   (let ((beg (overlay-start o))
         (end (overlay-end o)))
     (delete-overlay o)
+    (hs--update-headline)
     (hs--refresh-indicators beg end)))
 
 (defun hs--get-ellipsis (b e)
@@ -1139,33 +1142,38 @@ the overlay: `invisible' `hs'.  Also, depending on variable
       (save-excursion
         (hs--add-indicators from to)))))
 
+(defun hs--update-headline ()
+  "Update `hs-headline' from blocks temporarily opened by isearch."
+  (setq hs-headline
+        (catch 'headline
+          (dolist (overlay (overlays-in (point-min) (point-max)))
+            (when (overlay-get overlay 'hs-isearch-headline-active)
+              (let ((start (overlay-start overlay)))
+                (throw 'headline
+                       (buffer-substring
+                        (save-excursion
+                          (goto-char start)
+                          (beginning-of-line)
+                          (skip-chars-forward " \t")
+                          (point))
+                        start)))))
+          nil))
+  (force-mode-line-update))
+
 (defun hs-isearch-show (ov)
-  "Delete overlay OV, and set `hs-headline' to nil.
+  "Delete overlay OV and update `hs-headline'.
 
 This function is meant to be used as the `isearch-open-invisible'
 property of an overlay."
-  (setq hs-headline nil)
-  (delete-overlay ov))
+  (delete-overlay ov)
+  (hs--update-headline))
 
 (defun hs-isearch-show-temporary (ov hide-p)
-  "Hide or show overlay OV, and set `hs-headline', all depending on HIDE-P.
-If HIDE-P is non-nil, `hs-headline' is set to nil and overlay OV is hidden.
-Otherwise, `hs-headline' is set to the line of text at the head of OV, and
-OV is shown.
+  "Hide or show overlay OV and update `hs-headline' accordingly.
+HIDE-P non-nil means hide OV; otherwise, show it.
 
 This function is meant to be used as the `isearch-open-invisible-temporary'
 property of an overlay."
-  (setq hs-headline
-        (unless hide-p
-          (or hs-headline
-              (let ((start (overlay-start ov)))
-                (buffer-substring
-                 (save-excursion (goto-char start)
-                                 (beginning-of-line)
-                                 (skip-chars-forward " \t")
-                                 (point))
-                 start)))))
-  (force-mode-line-update)
   ;; handle `display' property specially
   (let (value)
     (if hide-p
@@ -1175,7 +1183,9 @@ property of an overlay."
       (when (setq value (overlay-get ov 'display))
         (overlay-put ov 'display nil)
         (overlay-put ov 'hs-isearch-display value))))
-  (overlay-put ov 'invisible (and hide-p 'hs)))
+  (overlay-put ov 'hs-isearch-headline-active (not hide-p))
+  (overlay-put ov 'invisible (and hide-p 'hs))
+  (hs--update-headline))
 
 (defun hs-looking-at-block-start-p--default ()
   "Return non-nil if point is at the block start."
@@ -1336,6 +1346,7 @@ to be assigned to `hs-adjust-block-beginning-function' for C-like modes."
         (when state
           (setq state (nreverse state))
           (remove-overlays (point-min) (point-max) 'hs-indicator t)
+          (hs--update-headline)
           state)))))
 
 (defun hs--restore-hidden-overlays-after-diff (buffer state)
@@ -1352,6 +1363,7 @@ to be assigned to `hs-adjust-block-beginning-function' for C-like modes."
                   (when (and beg end
                              (<= (point-min) beg end (point-max)))
                     (hs-make-overlay beg end (nth 2 entry)))))
+              (hs--update-headline)
               (when hs-show-indicators
                 (hs--refresh-indicators (point-min) (point-max))))))
     (dolist (entry state)
