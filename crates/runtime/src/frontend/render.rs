@@ -1033,6 +1033,7 @@ struct GridInputHitTestRow {
 pub struct GridInput {
     pub buffer_id: usize,
     pub text: Arc<str>,
+    pub mouse_prefer_closest_glyph: bool,
     /// Buffer point as a UTF-16 offset into `text`.
     pub cursor: usize,
     /// Active region as a UTF-16 range into `text`.
@@ -1377,6 +1378,9 @@ fn input_snapshot(
     Some(GridInput {
         buffer_id: bb.id,
         text,
+        mouse_prefer_closest_glyph: i
+            .q_soft("mouse-prefer-closest-glyph")
+            .is_some_and(|symbol| i.symbol_value(symbol).truthy()),
         cursor,
         selection,
         rows: Vec::new(),

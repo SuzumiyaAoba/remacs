@@ -31,6 +31,20 @@ pub(super) fn mouse_timestamp_ms() -> i128 {
         .min(i128::MAX as u128) as i128
 }
 
+fn mouse_layout_index_for_x(
+    line: &gpui::ShapedLine,
+    x: Pixels,
+    prefer_closest_glyph: bool,
+    end: usize,
+) -> usize {
+    let index = if prefer_closest_glyph {
+        line.closest_index_for_x(x)
+    } else {
+        line.index_for_x(x).unwrap_or(end)
+    };
+    index.min(end)
+}
+
 #[derive(Clone, Default)]
 pub(super) struct TextInputState {
     pub(super) marked: String,
@@ -446,9 +460,12 @@ pub(super) fn mouse_position_for_point_with_cell_width(
     let hit_column = area_hit.map_or(column, |(_, column)| column);
     let row_text = grid.rows.get(row)?;
     let (line, source_offsets) = shape_grid_row_with_bidi(grid, row, window, row_text);
-    let layout_byte = line
-        .closest_index_for_x(point.x)
-        .min(source_offsets.len().saturating_sub(1));
+    let layout_byte = mouse_layout_index_for_x(
+        &line,
+        point.x,
+        input.mouse_prefer_closest_glyph,
+        source_offsets.len().saturating_sub(1),
+    );
     let byte = source_offsets.get(layout_byte).copied()?;
     let mapped = input.hit_test_position(row, hit_column, byte)?;
     let area = area_hit
@@ -615,7 +632,12 @@ pub(super) fn mode_line_mouse_position_with_window(
         position.mode_line_buffer_name =
             point.x >= line.x_for_index(left) && point.x < line.x_for_index(right);
         if position.mode_line_buffer_name {
-            let column = line.closest_index_for_x(point.x).clamp(left, right);
+            let prefer_closest_glyph = grid
+                .input
+                .as_ref()
+                .is_some_and(|input| input.mouse_prefer_closest_glyph);
+            let column = mouse_layout_index_for_x(&line, point.x, prefer_closest_glyph, right)
+                .clamp(left, right);
             position.buffer_position = text.get(left..column)?.chars().count();
         }
     }
@@ -773,9 +795,14 @@ pub(super) fn void_text_area_at_point(
         return true;
     };
     let (layout, source_offsets) = shape_grid_row_with_bidi(grid, row, window, line);
-    let layout_byte = layout
-        .closest_index_for_x(point.x)
-        .min(source_offsets.len().saturating_sub(1));
+    let layout_byte = mouse_layout_index_for_x(
+        &layout,
+        point.x,
+        grid.input
+            .as_ref()
+            .is_some_and(|input| input.mouse_prefer_closest_glyph),
+        source_offsets.len().saturating_sub(1),
+    );
     let Some(byte) = source_offsets.get(layout_byte).copied() else {
         return true;
     };
@@ -828,9 +855,12 @@ pub(super) fn mouse_position_for_text_point_with_cell_width(
     };
     let line = grid.rows.get(row)?;
     let (layout, source_offsets) = shape_grid_row_with_bidi(grid, row, window, line);
-    let layout_byte = layout
-        .closest_index_for_x(point.x)
-        .min(source_offsets.len().saturating_sub(1));
+    let layout_byte = mouse_layout_index_for_x(
+        &layout,
+        point.x,
+        input.mouse_prefer_closest_glyph,
+        source_offsets.len().saturating_sub(1),
+    );
     let byte = source_offsets.get(layout_byte).copied()?;
     let (source_start, source_end) = input.hit_test_source_range(row, column)?;
     (source_start..=source_end)
