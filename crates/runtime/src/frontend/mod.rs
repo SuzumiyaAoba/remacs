@@ -979,7 +979,8 @@ pub use command::{
 pub use render::{
     BoxStyle, BoxStyleKind, CellColor, CellStyle, Grid, GridBottomDivider, GridCursor,
     GUI_DEFAULT_BACKGROUND_RGB, GUI_DEFAULT_FOREGROUND_RGB,
-    GridCursorShape, GridFringeBitmap, GridFringeBitmapAlign, GridHelpEcho, GridImage,
+    GridCursorShape, GridFringeBitmap, GridFringeBitmapAlign, GridHelpEcho, GridHelpEchoSource,
+    GridImage,
     GridImageConversion, GridImageMapArea, GridImageMapShape, GridImageSizeLimit,
     GridImageSlice, GridImageSlicePart, GridImageSlicePixels, GridImageSource, GridInput,
     GridInputPosition,

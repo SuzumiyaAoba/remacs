@@ -3819,9 +3819,16 @@ impl KeyIo for ChanIo {
                 .help_echoes
                 .iter()
                 .find(|region| {
-                    region.row == position.row
-                        && position.column >= region.left
-                        && position.column < region.left.saturating_add(region.width)
+                    if let Some(source) = &region.source {
+                        source.buffer_id == position.buffer_id
+                            && Some(source.window_id) == position.window_id
+                            && position.buffer_position >= source.start
+                            && position.buffer_position < source.end
+                    } else {
+                        region.row == position.row
+                            && position.column >= region.left
+                            && position.column < region.left.saturating_add(region.width)
+                    }
                 })
                 .cloned()
         });

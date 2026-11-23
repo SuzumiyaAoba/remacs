@@ -448,12 +448,21 @@ pub struct GridPopupMenuItem {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct GridHelpEchoSource {
+    pub buffer_id: usize,
+    pub window_id: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GridHelpEcho {
     pub row: usize,
     pub left: usize,
     pub width: usize,
     pub text: String,
     pub inhibit_substitution: bool,
+    pub source: Option<GridHelpEchoSource>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -490,11 +499,28 @@ pub struct GridTooltip {
     pub runs: Vec<GridTooltipRun>,
 }
 
+fn help_echo_sources_mergeable(
+    previous: Option<&GridHelpEchoSource>,
+    next: Option<&GridHelpEchoSource>,
+) -> bool {
+    match (previous, next) {
+        (None, None) => true,
+        (Some(previous), Some(next)) => {
+            previous.buffer_id == next.buffer_id
+                && previous.window_id == next.window_id
+                && next.start <= previous.end
+                && previous.start <= next.end
+        }
+        _ => false,
+    }
+}
+
 fn push_help_echo(regions: &mut Vec<GridHelpEcho>, next: GridHelpEcho) {
     if let Some(previous) = regions.last_mut()
         && previous.row == next.row
         && previous.text == next.text
         && previous.inhibit_substitution == next.inhibit_substitution
+        && help_echo_sources_mergeable(previous.source.as_ref(), next.source.as_ref())
         && next.left <= previous.left.saturating_add(previous.width)
     {
         let end = previous
@@ -502,6 +528,12 @@ fn push_help_echo(regions: &mut Vec<GridHelpEcho>, next: GridHelpEcho) {
             .saturating_add(previous.width)
             .max(next.left.saturating_add(next.width));
         previous.width = end.saturating_sub(previous.left);
+        if let (Some(previous_source), Some(next_source)) =
+            (&mut previous.source, next.source.as_ref())
+        {
+            previous_source.start = previous_source.start.min(next_source.start);
+            previous_source.end = previous_source.end.max(next_source.end);
+        }
     } else {
         regions.push(next);
     }
@@ -4861,6 +4893,7 @@ fn render_tool_bar(
                     width: button_width,
                     text: help.clone(),
                     inhibit_substitution: false,
+                    source: None,
                 },
             );
         }
@@ -5472,6 +5505,7 @@ fn render_popup_menu(
                         width: available_width,
                         text: help.clone(),
                         inhibit_substitution: true,
+                        source: None,
                     },
                 );
             }
@@ -6676,6 +6710,7 @@ fn place_formatted_window_row(
                     width: cells,
                     text,
                     inhibit_substitution: properties.inhibit_substitution,
+                    source: None,
                 },
             );
         }
@@ -14627,6 +14662,12 @@ fn render_grid_internal(
                             width: visible_width,
                             text,
                             inhibit_substitution,
+                            source: Some(GridHelpEchoSource {
+                                buffer_id: buf_id,
+                                window_id,
+                                start: segment_pos + index,
+                                end: segment_pos + index + 1,
+                            }),
                         });
                     }
                 }
