@@ -654,8 +654,10 @@ OMIT-NULLS and TRIM match the corresponding split-string arguments."
 
 READER should be a reader function that accepts a single string argument.
 SEPARATORS, OMIT-NULLS, and TRIM are as in `split-string'.
-SEPARATORS defaults to \"[^\\][,;]\".  TRIM defaults to matching a
-double quote character.  Separators inside double-quoted strings and
+If SEPARATORS is nil, commas and semicolons are literal separators.
+A non-nil SEPARATORS is interpreted as a regexp, except that a single
+comma or semicolon is also treated literally.  TRIM defaults to matching
+a double quote character.  Separators inside double-quoted strings and
 separators escaped with a backslash are preserved.
 
 VALUE-REGEX should be a regular expression if READER assumes that
