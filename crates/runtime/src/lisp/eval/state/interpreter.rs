@@ -92,6 +92,9 @@ pub struct Interp {
     /// Last GUI pointer position in frame-relative character cells, with its
     /// frame id. Used by `mouse-position' after pointer-movement events.
     pub gui_mouse_frame_position: Option<(usize, i128, i128)>,
+    /// Last text glyph under the GUI pointer, used to suppress coarse
+    /// `mouse-movement' events within the same glyph.
+    pub gui_mouse_glyph_position: Option<(Option<usize>, crate::frontend::MousePosition)>,
     /// The same pointer location in pixels for `mouse-pixel-position'.
     pub gui_mouse_frame_pixel_position: Option<(usize, i128, i128)>,
     /// Decoded bytes retained by the GUI image asset cache.

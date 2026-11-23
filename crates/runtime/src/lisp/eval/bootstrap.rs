@@ -106,6 +106,7 @@ impl Interp {
             gui_mouse_position: None,
             gui_mouse_absolute_position: None,
             gui_mouse_frame_position: None,
+            gui_mouse_glyph_position: None,
             gui_mouse_frame_pixel_position: None,
             gui_image_cache_size: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             frame_font_metrics: HashMap::default(),

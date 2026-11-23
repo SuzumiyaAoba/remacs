@@ -1944,10 +1944,27 @@ fn dispatch_gui_mouse_move(
 ) -> io::Result<()> {
     reveal_pointer_after_mouse_move(i, frame_id);
     let frame_id = remember_gui_mouse_position(i, frame_id, frame_position, frame_pixel_position);
+    let same_glyph = match (i.gui_mouse_glyph_position, position) {
+        (Some((previous_frame, previous)), Some(current)) => {
+            previous_frame == frame_id
+                && previous.buffer_position != crate::frontend::MOUSE_POSITION_NO_BUFFER
+                && previous.buffer_id == current.buffer_id
+                && previous.buffer_position == current.buffer_position
+                && previous.window_id == current.window_id
+                && previous.area == current.area
+                && previous.object == current.object
+                && previous.mode_line_buffer_name == current.mode_line_buffer_name
+        }
+        _ => false,
+    };
+    i.gui_mouse_glyph_position = position.map(|position| (frame_id, position));
 
     // Lisp consumers such as mouse tracking modes observe ordinary pointer
     // motion through the same event used for a drag.
-    if mouse_movement_tracking_enabled(i) {
+    let fine_grained = i
+        .q_soft("mouse-fine-grained-tracking")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy());
+    if mouse_movement_tracking_enabled(i) && (fine_grained || !same_glyph) {
         dispatch_gui_mouse_movement(i, position, modifiers, keys, arg_mode)?;
     }
     dispatch_gui_window_autoselect(
