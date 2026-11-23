@@ -144,37 +144,26 @@ impl Reader<'_> {
                     }
                     return Ok(Value::Nil);
                 }
-                // Function streams count N characters before scanning to the
-                // record separator. If N itself consumes that separator, GNU
-                // ends this read instead of skipping on to the next record.
-                if matches!(&self.source, super::ReadSource::Function { .. }) {
-                    for _ in 0..n {
-                        let Some(c) = self.next()? else {
-                            return Err(eof_err(self.interp));
-                        };
-                        if c == '\u{1f}' {
-                            return Err(eof_err(self.interp));
-                        }
+                // Skip N characters first. If the count itself consumes the
+                // separator, GNU ends this read instead of starting the next
+                // record.
+                for _ in 0..n {
+                    let Some(c) = self.next()? else {
+                        return Err(eof_err(self.interp));
+                    };
+                    if c == '\u{1f}' {
+                        return Err(eof_err(self.interp));
                     }
                 }
-                while let Some(c) = self.peek()? {
-                    self.pos += 1;
+                while let Some(c) = self.next()? {
                     if c == '\u{1f}' {
                         break;
                     }
                 }
-                // In-memory readers treat the 0x1f record separator as the
-                // end of this input object.  Bytes after it belong to the
-                // surrounding load protocol and are not a new Lisp form.
-                // GNU's function-stream reader continues this same read
-                // after the separator instead of reporting EOF.
-                if matches!(&self.source, super::ReadSource::Function { .. }) {
-                    return match self.read_inner()? {
-                        Some(value) => Ok(value),
-                        None => Err(eof_err(self.interp)),
-                    };
+                match self.read_inner()? {
+                    Some(value) => Ok(value),
+                    None => Err(eof_err(self.interp)),
                 }
-                Err(eof_err(self.interp))
             }
             Some('(') => {
                 // `#("str" BEG END (plist) ...)' — propertized string
