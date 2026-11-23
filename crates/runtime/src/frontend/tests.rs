@@ -2616,3 +2616,58 @@ fn gui_mouse_autoselect_does_not_switch_windows_while_popup_is_active() {
     assert!(keys.is_empty());
     assert!(!arg_mode);
 }
+
+#[test]
+fn popup_hover_uses_the_selected_row_style() {
+    let mut i = interp_with_frame(" ");
+    i.eval_str("(set-frame-parameter nil 'window-system 'ns)")
+        .unwrap();
+    let frame_id = i.selected_frame.as_ref().unwrap().borrow().id;
+    let ignore = Value::Sym(i.intern("ignore"));
+    let menu = Rc::new(crate::frontend::PopupMenu {
+        id: 7,
+        position: crate::frontend::PopupMenuPosition {
+            frame_id,
+            anchor: crate::frontend::PopupMenuAnchor::Frame,
+            from_event: false,
+            x: 0,
+            y: 0,
+        },
+        entries: ["First", "Second"]
+            .into_iter()
+            .map(|label| crate::frontend::PopupMenuEntry {
+                label: label.to_string(),
+                command: None,
+                separator: false,
+                submenu: false,
+                depth: 0,
+                value: Some(ignore.clone()),
+                checked: false,
+                help: None,
+                key_hint: None,
+            })
+            .collect(),
+        navigation: RefCell::new(crate::frontend::PopupMenuNavigation::default()),
+        scroll_offset: std::cell::Cell::new(0),
+        visible_rows: std::cell::Cell::new(0),
+    });
+    i.gui_popup_menu = Some(menu.clone());
+
+    let before = render_grid(&i, 40, 16);
+    let first = before
+        .popup_menu_items
+        .iter()
+        .find(|item| item.selection == Some(0))
+        .unwrap();
+    let before_style = before.attrs[first.row][first.left].clone();
+    assert!(menu.hover(None, Some(0)));
+
+    let after = render_grid(&i, 40, 16);
+    let first = after
+        .popup_menu_items
+        .iter()
+        .find(|item| item.selection == Some(0))
+        .unwrap();
+    let after_style = after.attrs[first.row][first.left].clone();
+    assert_ne!(before_style, after_style);
+}
