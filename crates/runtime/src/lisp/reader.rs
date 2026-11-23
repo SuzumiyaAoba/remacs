@@ -464,7 +464,10 @@ impl<'a> Reader<'a> {
                     return Err(read_err(self.interp, ")"));
                 }
                 let tail = self.read_object()?;
-                if self.skip_layout()? || self.peek()? != Some(close) {
+                if self.skip_layout()? {
+                    return Err(eof_err(self.interp));
+                }
+                if self.peek()? != Some(close) {
                     // Emacs: (invalid-read-syntax "expected )")
                     // The lookahead used for this diagnostic is consumed
                     // from a function stream; GNU does not unread it.
