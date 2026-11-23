@@ -2561,6 +2561,16 @@ impl EditorView {
         true
     }
 
+    fn cancel_interrupted_mouse_state(&mut self) {
+        self.mouse_down_positions.clear();
+        self.scroll_bar_drag = None;
+        self.tab_bar_drag = None;
+        self.frame_drag = None;
+        self.consumed_mouse_buttons.clear();
+        self.pressed_button = None;
+        self.middle_tab_close_index = None;
+    }
+
     pub(super) fn focus_on_map(&self, window: &mut Window, focus_on_map: bool) {
         if focus_on_map && !self.no_accept_focus.get() {
             self.focus.focus(window);
@@ -7838,8 +7848,9 @@ pub(super) fn build_managed_editor_view(
     });
     let frame_events = view.tx.clone();
     let focus_modifier_state = view.physical_modifier_state.clone();
-    let subscription = window.on_focus_out(&view.focus, cx, move |_event, window, _cx| {
+    let subscription = cx.on_focus_out(&view.focus, window, move |view, _event, window, _cx| {
         clear_physical_modifier_state(&focus_modifier_state);
+        view.cancel_interrupted_mouse_state();
         if let Some(frame_id) = frame_events.frame_id() {
             let visibility = crate::native_frame_visibility(window);
             let _ = frame_events.send_visibility_update(frame_id, visibility);
