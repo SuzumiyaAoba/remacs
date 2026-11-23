@@ -248,7 +248,7 @@ not be enclosed in { } or ( )."
   "Characters to skip to find a line that might be a dependency.")
 
 (defvar makefile-rule-action-regex
-  "^\t[ \t]*\\(?:\\([-@]+\\)[ \t]*\\)\\(.*\\(?:\\\\\n.*\\)*\\)"
+  "^\t[ \t]*\\(?:\\([-@]+\\)[ \t]*\\)?\\(\\(?:.*\\\\\n\\)*.*\\)"
   "Regex used to highlight rule action lines in font lock mode.")
 
 (defconst makefile-makepp-rule-action-regex
@@ -845,6 +845,8 @@ Makefile mode can be configured by modifying the following variables:
 		nil nil
 		((?$ . "."))
 		backward-paragraph))
+  ;; Rule-action matchers include backslash-continued recipe lines.
+  (setq-local font-lock-multiline t)
   (setq-local syntax-propertize-function
 	      makefile-syntax-propertize-function)
 
