@@ -674,6 +674,8 @@ pub fn run_gui_with_dump(
                 user_position: initial_frame_size.is_some_and(|frame| frame.user_position),
                 size_specified: initial_frame_size.is_some_and(|frame| frame.has_size_parameter),
                 user_size: initial_frame_size.is_some_and(|frame| frame.user_size),
+                override_redirect: initial_frame_size
+                    .is_some_and(|frame| frame.override_redirect),
                 ..Default::default()
             },
             |window, cx| {
@@ -2184,6 +2186,7 @@ fn frame_window_options(
         user_position: frame.user_position,
         size_specified: frame.width_size.is_some() || frame.height_size.is_some(),
         user_size: frame.user_size,
+        override_redirect: frame.override_redirect,
         window_background: frame_background_appearance(frame),
         display_id: display_id.map(DisplayId::from),
         kind: if child {

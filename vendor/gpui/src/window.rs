@@ -949,6 +949,7 @@ impl Window {
             user_position,
             size_specified,
             user_size,
+            override_redirect,
             titlebar,
             focus,
             show,
@@ -980,6 +981,7 @@ impl Window {
                 user_position,
                 size_specified,
                 user_size,
+                override_redirect,
                 titlebar,
                 kind,
                 #[cfg(target_os = "macos")]

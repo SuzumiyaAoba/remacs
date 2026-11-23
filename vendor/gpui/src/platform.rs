@@ -1264,6 +1264,9 @@ pub struct WindowOptions {
     /// Whether the initial size should be advertised as user-specified.
     pub user_size: bool,
 
+    /// Whether an X11 window should bypass window-manager control.
+    pub override_redirect: bool,
+
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
 
@@ -1333,6 +1336,7 @@ pub(crate) struct WindowParams {
     pub user_position: bool,
     pub size_specified: bool,
     pub user_size: bool,
+    pub override_redirect: bool,
 
     /// The titlebar configuration of the window
     #[cfg_attr(feature = "wayland", allow(dead_code))]
@@ -1470,6 +1474,7 @@ impl Default for WindowOptions {
             user_position: false,
             size_specified: false,
             user_size: false,
+            override_redirect: false,
             titlebar: Some(TitlebarOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
