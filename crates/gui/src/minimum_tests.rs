@@ -65,6 +65,7 @@ fn native_frame_options_keep_the_viewport_at_least_three_rows_high() {
         image_cache_entries: Arc::new(Mutex::new(HashMap::new())),
         image_cache_size: Arc::new(AtomicUsize::new(0)),
         name: "F1".to_owned(),
+        icon_name: None,
         parent_frame: None,
         visibility: remacs_runtime::frontend::FrameVisibility::Visible,
         modifier_mapping: super::keys::ModifierMapping::default(),

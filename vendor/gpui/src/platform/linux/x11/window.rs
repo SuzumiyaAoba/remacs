@@ -1578,6 +1578,40 @@ impl PlatformWindow for X11Window {
         xcb_flush(&self.0.xcb);
     }
 
+    fn set_icon_name(&mut self, icon_name: &str) {
+        let latin1_icon_name: Option<Vec<u8>> = icon_name
+            .chars()
+            .map(|ch| u8::try_from(ch as u32).ok())
+            .collect();
+        let (encoding, bytes) = match latin1_icon_name.as_deref() {
+            Some(bytes) => (xproto::AtomEnum::STRING.into(), bytes),
+            None => (self.0.state.borrow().atoms.UTF8_STRING, icon_name.as_bytes()),
+        };
+        check_reply(
+            || "X11 ChangeProperty8 on WM_ICON_NAME failed.",
+            self.0.xcb.change_property8(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                xproto::AtomEnum::WM_ICON_NAME,
+                encoding,
+                bytes,
+            ),
+        )
+        .log_err();
+        check_reply(
+            || "X11 ChangeProperty8 on _NET_WM_ICON_NAME failed.",
+            self.0.xcb.change_property8(
+                xproto::PropMode::REPLACE,
+                self.0.x_window,
+                self.0.state.borrow().atoms._NET_WM_ICON_NAME,
+                self.0.state.borrow().atoms.UTF8_STRING,
+                icon_name.as_bytes(),
+            ),
+        )
+        .log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
     fn set_app_id(&mut self, app_id: &str) {
         let mut data = Vec::with_capacity(app_id.len() * 2 + 1);
         data.extend(app_id.bytes()); // instance https://unix.stackexchange.com/a/494170

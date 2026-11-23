@@ -1857,6 +1857,8 @@ pub(super) struct EditorView {
     physical_modifier_state: Rc<Cell<PhysicalModifierState>>,
     installed_menus: Vec<GridMenu>,
     window_title: Option<String>,
+    icon_name: Option<String>,
+    window_icon_name: Option<String>,
     pub(super) cols: usize,
     rows: usize,
     input: TextInputState,
@@ -1948,6 +1950,14 @@ impl EditorView {
         self.update_window_title(window);
     }
 
+    pub(super) fn set_icon_name(&mut self, icon_name: Option<String>, window: &mut Window) {
+        if self.icon_name != icon_name {
+            self.icon_name = icon_name;
+            self.window_icon_name = None;
+        }
+        self.update_window_title(window);
+    }
+
     pub(super) fn share_picker_anchor(&self) -> Option<(f32, f32, f32)> {
         let cursor = self.grid.cursors.iter().find(|cursor| cursor.selected)?;
         let x = self.internal_border_width as f32
@@ -2010,6 +2020,15 @@ impl EditorView {
         if self.window_title.as_deref() != Some(self.grid.title.as_str()) {
             window.set_window_title(&self.grid.title);
             self.window_title = Some(self.grid.title.clone());
+            self.window_icon_name = self
+                .icon_name
+                .is_none()
+                .then(|| self.grid.title.clone());
+        }
+        let icon_name = self.icon_name.as_deref().unwrap_or(&self.grid.title);
+        if self.window_icon_name.as_deref() != Some(icon_name) {
+            window.set_icon_name(icon_name);
+            self.window_icon_name = Some(icon_name.to_owned());
         }
     }
 
@@ -2048,6 +2067,8 @@ impl EditorView {
             physical_modifier_state: Rc::new(Cell::new(PhysicalModifierState::default())),
             installed_menus: Vec::new(),
             window_title: None,
+            icon_name: None,
+            window_icon_name: None,
             cols: 80,
             rows: 24,
             input: TextInputState::default(),
@@ -2106,6 +2127,8 @@ impl EditorView {
         self.follow_tooltip_drag = false;
         self.resize_increments = None;
         self.native_minimum_size = None;
+        self.icon_name = None;
+        self.window_icon_name = None;
         self.mouse_face_position.set(None);
         self.geometry = None;
         self.runtime_frame_size = None;

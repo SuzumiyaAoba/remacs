@@ -1887,6 +1887,11 @@ impl Window {
         self.platform_window.set_title(title);
     }
 
+    /// Updates the icon title independently from the window title when supported.
+    pub fn set_icon_name(&mut self, icon_name: &str) {
+        self.platform_window.set_icon_name(icon_name);
+    }
+
     /// Update the semantic contents exposed to assistive technology.
     pub fn set_accessibility_tree(&mut self, tree: accesskit::TreeUpdate) {
         #[cfg(target_os = "linux")]

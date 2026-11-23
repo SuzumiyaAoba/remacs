@@ -571,6 +571,7 @@ pub(super) struct FrameSnapshot {
     pub image_cache_entries: Arc<Mutex<HashMap<GridImageSource, usize>>>,
     pub image_cache_size: Arc<AtomicUsize>,
     pub name: String,
+    pub icon_name: Option<String>,
     pub parent_frame: Option<usize>,
     pub visibility: FrameVisibility,
     pub modifier_mapping: super::keys::ModifierMapping,
@@ -646,6 +647,10 @@ fn frame_snapshot(
         image_cache_entries,
         image_cache_size: i.gui_image_cache_size.clone(),
         name,
+        icon_name: match frame_parameter_value(i, frame, "icon-name") {
+            Value::Str(icon_name) => Some(icon_name.borrow().to_unicode_lossy()),
+            _ => None,
+        },
         parent_frame,
         visibility: remacs_runtime::editor::frame_visibility(i, frame),
         modifier_mapping: super::keys::ModifierMapping::from_interp(i),

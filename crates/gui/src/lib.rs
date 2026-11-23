@@ -868,6 +868,7 @@ pub fn run_gui_with_dump(
                                         != Some(&represented_file);
                                 let requested_behavior = behavior.clone();
                                 let requested_represented_file = represented_file.clone();
+                                let requested_icon_name = snapshot.icon_name.clone();
                                 let child_bounds = handle.update(cx, move |view, window, cx| {
                                     view.set_image_cache_metrics(
                                         image_cache_entries,
@@ -916,6 +917,7 @@ pub fn run_gui_with_dump(
                                     {
                                         cx.notify();
                                     }
+                                    view.set_icon_name(requested_icon_name, window);
                                     window.set_opacity(frame_opacity(
                                         alpha_active,
                                         alpha_inactive,
@@ -1029,6 +1031,7 @@ pub fn run_gui_with_dump(
                                 let initial_ns_appearance = ns_appearance;
                                 let initial_represented_file = represented_file.clone();
                                 let represented_file_for_window = represented_file.clone();
+                                let initial_icon_name = snapshot.icon_name.clone();
                                 let initial_titlebar_appearance = titlebar_appearance;
                                 let initial_image_cache_entries = image_cache_entries.clone();
                                 let initial_image_cache_size = image_cache_size.clone();
@@ -1046,6 +1049,7 @@ pub fn run_gui_with_dump(
                                         frame_drag_parameters.2,
                                     );
                                     view.set_grid(grid, window);
+                                    view.set_icon_name(initial_icon_name, window);
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
                                     view.apply_minimum_cells(
@@ -1131,6 +1135,7 @@ pub fn run_gui_with_dump(
                             let ns_appearance = snapshot.ns_appearance;
                             let represented_file = snapshot.represented_file.clone();
                             let represented_file_for_window = represented_file.clone();
+                            let icon_name_for_window = snapshot.icon_name.clone();
                             let titlebar_appearance = (
                                 snapshot.parent_frame.is_none() && !snapshot.undecorated,
                                 snapshot.ns_transparent_titlebar,
@@ -1168,6 +1173,7 @@ pub fn run_gui_with_dump(
                                         focus_on_map && visibility == FrameVisibility::Visible,
                                         no_accept_focus,
                                     );
+                                    view.set_icon_name(icon_name_for_window, window);
                                     view.set_minimum_cells(minimum_cells.0, minimum_cells.1);
                                     view.set_frame_drag_parameters(
                                         frame_drag_parameters.0,
