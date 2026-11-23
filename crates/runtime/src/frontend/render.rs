@@ -15,6 +15,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
+use unicode_bidi::BidiInfo;
 use unicode_width::UnicodeWidthChar;
 
 /// A terminal color: RGB. Face color specs (names, `#rgb' forms) are
@@ -1957,6 +1958,74 @@ pub(crate) fn buffer_setting(i: &Interp, name: &str, buffer: usize) -> Value {
     i.buffer_local_toplevel_value(id, buffer)
         .or_else(|| i.default_toplevel_value(id))
         .unwrap_or(Value::Nil)
+}
+
+fn automatic_bidi_paragraph_directions(
+    i: &Interp,
+    buffer_id: usize,
+) -> HashMap<usize, GridBidiDirection> {
+    let Some(buffer) = i.buffers.get(buffer_id) else {
+        return HashMap::new();
+    };
+    let (first_line, lines) = {
+        let buffer = buffer.borrow();
+        let first_line = buffer.text.line_of_pos(buffer.begv);
+        let last_line = buffer.text.line_of_pos(buffer.zv);
+        let lines = (first_line..=last_line)
+            .map(|line| {
+                let start = buffer.text.line_start(line).max(buffer.begv);
+                let end = buffer.text.line_end(start).min(buffer.zv);
+                buffer.text.substring(start, end).to_unicode_lossy()
+            })
+            .collect::<Vec<_>>();
+        (first_line, lines)
+    };
+    let line_is_blank = |line: &str| line.chars().all(char::is_whitespace);
+    let mut directions = HashMap::new();
+    let mut index = 0;
+    while index < lines.len() {
+        if line_is_blank(&lines[index]) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < lines.len() && !line_is_blank(&lines[index]) {
+            index += 1;
+        }
+        let paragraph = lines[start..index].join(" ");
+        let direction = if BidiInfo::new(&paragraph, None)
+            .paragraphs
+            .first()
+            .is_some_and(|paragraph| paragraph.level.is_rtl())
+        {
+            GridBidiDirection::RightToLeft
+        } else {
+            GridBidiDirection::LeftToRight
+        };
+        for line in start..index {
+            directions.insert(first_line + line, direction);
+        }
+    }
+
+    let last_line = first_line.saturating_add(lines.len().saturating_sub(1));
+    let mut previous = None;
+    for line in first_line..=last_line {
+        if let Some(direction) = directions.get(&line).copied() {
+            previous = Some(direction);
+        } else if let Some(direction) = previous {
+            directions.insert(line, direction);
+        }
+    }
+    let mut next = None;
+    for line in (first_line..=last_line).rev() {
+        if let Some(direction) = directions.get(&line).copied() {
+            next = Some(direction);
+        } else {
+            let direction = next.unwrap_or(GridBidiDirection::LeftToRight);
+            directions.insert(line, direction);
+        }
+    }
+    directions
 }
 
 pub(crate) fn line_number_display_settings(i: &Interp, buffer: usize) -> (usize, i128) {
@@ -12886,6 +12955,8 @@ fn render_grid_internal(
         }
     }
 
+    let mut automatic_bidi_directions_by_buffer =
+        HashMap::<usize, HashMap<usize, GridBidiDirection>>::new();
     for w in &fb.windows {
         let (
             window_id,
@@ -13098,6 +13169,9 @@ fn render_grid_internal(
             }
             _ => None,
         };
+        let automatic_bidi_paragraph_direction = bidi_display_reordering
+            && bidi_paragraph_direction.is_none()
+            && buffer_setting(i, "enable-multibyte-characters", buf_id).truthy();
         let stretch_cursor = buffer_setting(i, "x-stretch-cursor", buf_id).truthy();
         let tab_width = buffer_tab_width(i, buf_id);
         let ctl_arrow = buffer_setting(i, "ctl-arrow", buf_id).truthy();
@@ -14117,6 +14191,19 @@ fn render_grid_internal(
                     .or_default()
                     .push(DisplayText::plain("…".to_owned()));
             }
+            let row_bidi_paragraph_direction = bidi_paragraph_direction.or_else(|| {
+                if !automatic_bidi_paragraph_direction {
+                    return None;
+                }
+                let line_number = i
+                    .buffers
+                    .get(buf_id)
+                    .map(|buffer| buffer.borrow().text.line_of_pos(line_pos))?;
+                let directions = automatic_bidi_directions_by_buffer
+                    .entry(buf_id)
+                    .or_insert_with(|| automatic_bidi_paragraph_directions(i, buf_id));
+                directions.get(&line_number).copied()
+            });
             for plan in plans {
                 let range = &plan.range;
                 if range.end < start_offset
@@ -15021,7 +15108,7 @@ fn render_grid_internal(
                         content_left.saturating_add(content_width).min(width),
                     ));
                 }
-                if let Some(direction) = bidi_paragraph_direction
+                if let Some(direction) = row_bidi_paragraph_direction
                     && content_width > 0
                 {
                     bidi_paragraph_cell_ranges.push((
