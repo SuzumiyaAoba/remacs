@@ -3091,9 +3091,12 @@ impl Render for EditorView {
             .id("remacs-editor-drop-target")
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
                 let urls = paths
-                    .paths()
+                    .items()
                     .iter()
-                    .map(|path| file_drop_uri(path))
+                    .map(|item| match item {
+                        ExternalPath::Path(path) => file_drop_uri(path),
+                        ExternalPath::FileUrl(url) => url.clone(),
+                    })
                     .collect::<Vec<_>>();
                 let action = external_file_drop_action(paths.operation()).to_owned();
                 let position =

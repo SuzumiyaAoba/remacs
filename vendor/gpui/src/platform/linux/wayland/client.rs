@@ -15,8 +15,6 @@ use calloop::{
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
-use http_client::Url;
-use smallvec::SmallVec;
 use util::ResultExt;
 use wayland_backend::client::ObjectId;
 use wayland_backend::protocol::WEnum;
@@ -1990,18 +1988,15 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                     is_color: false,
                                 })
                             } else {
-                                let paths: SmallVec<[_; 2]> = content
-                                    .lines()
-                                    .filter_map(|path| Url::parse(path).log_err())
-                                    .filter_map(|url| url.to_file_path().log_err())
-                                    .collect();
-                                if paths.is_empty() {
+                                let Some(paths) =
+                                    crate::platform::external_paths_from_uri_list(&content)
+                                else {
                                     data_offer.destroy();
                                     return;
-                                }
+                                };
                                 PlatformInput::FileDrop(FileDropEvent::Entered {
                                     position,
-                                    paths: crate::ExternalPaths::new(paths),
+                                    paths,
                                 })
                             };
 

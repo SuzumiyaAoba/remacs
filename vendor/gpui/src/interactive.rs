@@ -510,17 +510,48 @@ impl Deref for MouseExitEvent {
     }
 }
 
+/// A file drop item represented as a local path or file URI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExternalPath {
+    /// A local filesystem path.
+    Path(PathBuf),
+    /// A file URI that cannot be represented as a local path on this platform.
+    FileUrl(String),
+}
+
 /// A collection of paths from the platform, such as from a file drop.
 #[derive(Debug, Clone, Default)]
 pub struct ExternalPaths {
     paths: SmallVec<[PathBuf; 2]>,
+    items: SmallVec<[ExternalPath; 2]>,
     operation: ExternalDragOperation,
 }
 
 impl ExternalPaths {
     pub(crate) fn new(paths: SmallVec<[PathBuf; 2]>) -> Self {
+        let items = paths
+            .iter()
+            .cloned()
+            .map(ExternalPath::Path)
+            .collect();
         Self {
             paths,
+            items,
+            operation: ExternalDragOperation::Copy,
+        }
+    }
+
+    pub(crate) fn from_items(items: SmallVec<[ExternalPath; 2]>) -> Self {
+        let paths = items
+            .iter()
+            .filter_map(|item| match item {
+                ExternalPath::Path(path) => Some(path.clone()),
+                ExternalPath::FileUrl(_) => None,
+            })
+            .collect();
+        Self {
+            paths,
+            items,
             operation: ExternalDragOperation::Copy,
         }
     }
@@ -528,6 +559,11 @@ impl ExternalPaths {
     /// Convert this collection of paths into a slice.
     pub fn paths(&self) -> &[PathBuf] {
         &self.paths
+    }
+
+    /// Return the original ordered paths and file URLs from the platform.
+    pub fn items(&self) -> &[ExternalPath] {
+        &self.items
     }
 
     /// Return the operation selected for this file drop.

@@ -7,9 +7,7 @@ use calloop::{
 };
 use collections::HashMap;
 use core::str;
-use http_client::Url;
 use log::Level;
-use smallvec::SmallVec;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, HashSet},
@@ -900,14 +898,13 @@ impl X11Client {
                 let position = state.xdnd_state.position;
                 let input = if state.xdnd_state.drag_type == state.atoms.TextUriList {
                     let file_list = String::from_utf8_lossy(&reply.value);
-                    let paths: SmallVec<[_; 2]> = file_list
-                        .lines()
-                        .filter_map(|path| Url::parse(path).log_err())
-                        .filter_map(|url| url.to_file_path().log_err())
-                        .collect();
+                    let Some(paths) = crate::platform::external_paths_from_uri_list(&file_list)
+                    else {
+                        return Some(());
+                    };
                     PlatformInput::FileDrop(FileDropEvent::Entered {
                         position,
-                        paths: crate::ExternalPaths::new(paths),
+                        paths,
                     })
                 } else if xdnd_is_text_atom(state.xdnd_state.drag_type, &state.atoms) {
                     let text = if reply.type_ == state.atoms.STRING {
