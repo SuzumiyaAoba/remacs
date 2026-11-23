@@ -779,9 +779,7 @@ File = \\(.+\\), Line = \\([0-9]+\\)\\(?:, Column = \\([0-9]+\\)\\)?"
   "Alist of values for `compilation-error-regexp-alist'.")
 
 (defcustom compilation-error-regexp-alist
-  ;; Omit `omake' by default: its mere presence here triggers special processing
-  ;; and modifies regexps for other rules (see `compilation-parse-errors'),
-  ;; which may slow down matching (or even cause mismatches).
+  ;; Omit `omake' by default: it enables matching for OMake-indented errors.
   (delq 'omake (mapcar #'car compilation-error-regexp-alist-alist))
   "Alist that specifies how to match errors in compiler output.
 On GNU and Unix, any string is a valid filename, so these
@@ -1699,13 +1697,22 @@ This updates the appropriate variable used by the mode-line."
     (1 (incf compilation-num-warnings-found))
     (2 (incf compilation-num-errors-found))))
 
+(defun compilation--omake-command-p ()
+  "Return non-nil when the current compilation command invokes OMake."
+  (let ((command (car-safe compilation-arguments)))
+    (and (stringp command)
+         (string-match-p
+          "\\(?:\\`\\|[ \t;&|]\\)\\(?:[^ \t;&|]*/\\)?omake\\(?:[ \t;&|]\\|\\'\\)"
+          command))))
+
 (defun compilation-parse-errors (start end &rest rules)
   "Parse errors between START and END.
 The errors recognized are the ones specified in RULES which default
 to `compilation-error-regexp-alist' if RULES is nil."
   (let ((case-fold-search compilation-error-case-fold-search)
         (omake-included
-         (memq 'omake (or rules compilation-error-regexp-alist))))
+         (and (memq 'omake (or rules compilation-error-regexp-alist))
+              (compilation--omake-command-p))))
     (dolist (rule-item (or rules compilation-error-regexp-alist))
       (let* ((item
               (if (symbolp rule-item)
@@ -1720,12 +1727,9 @@ to `compilation-error-regexp-alist' if RULES is nil."
              end-line end-col fmt
              props)
 
-        ;; omake reports some error indented, so skip the indentation.
-        ;; another solution is to modify (some?) regexps in
-        ;; `compilation-error-regexp-alist'.
-        ;; note that omake usage is not limited to ocaml and C (for stubs).
-        ;; FIXME-omake: Doing it here seems wrong, at least it should depend on
-        ;; whether or not omake's own error messages are recognized.
+        ;; OMake indents compiler errors.  Only enable that workaround when
+        ;; the current compilation command invokes OMake, so the presence of
+        ;; its rule cannot broaden matchers for unrelated compiler output.
         (cond
          ((or (not omake-included) (not pat))
           nil)
