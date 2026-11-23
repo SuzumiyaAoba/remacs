@@ -37,6 +37,9 @@
 
 ;;; Code:
 
+;; Byte-compilation should not inherit display-only folding from hideshow.
+(defvar hs-minor-mode-hook)
+
 ;; ========================================================================
 ;; Entry points:
 ;;	byte-recompile-directory, byte-compile-file,
@@ -2263,7 +2266,8 @@ See also `emacs-lisp-byte-compile-and-load'."
             (progn
               (setq-default major-mode 'emacs-lisp-mode)
               ;; Arg of t means don't alter enable-local-variables.
-              (delay-mode-hooks (normal-mode t)))
+              (let ((hs-minor-mode-hook nil))
+                (delay-mode-hooks (normal-mode t))))
           (setq-default major-mode dmm))
         ;; There may be a file local variable setting (bug#10419).
         (setq buffer-read-only nil
