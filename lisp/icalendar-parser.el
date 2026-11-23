@@ -211,18 +211,20 @@ decode it afterward."
       ;; previous state, so that if the buffer was already multibyte,
       ;; any multibyte characters where line folds broke up their
       ;; bytes can be reinterpreted:
-      (set-buffer-multibyte nil)
-      (with-restriction start-marker end-marker
-        (run-hooks 'icalendar-pre-unfolding-hook)
-        (goto-char (point-min))
-        ;; since we can't be sure that line folds have a leading CR
-        ;; in already-decoded regions, do the best we can:
-        (while (re-search-forward (rx (seq (zero-or-one "\r") "\n"
-                                           (or " " "\t")))
-                                  nil t)
-          (replace-match "" nil nil)))
-      ;; restore previous state, possibly reinterpreting characters:
-      (set-buffer-multibyte was-multibyte)
+      (unwind-protect
+          (progn
+            (set-buffer-multibyte nil)
+            (with-restriction start-marker end-marker
+              (run-hooks 'icalendar-pre-unfolding-hook)
+              (goto-char (point-min))
+              ;; since we can't be sure that line folds have a leading CR
+              ;; in already-decoded regions, do the best we can:
+              (while (re-search-forward (rx (seq (zero-or-one "\r") "\n"
+                                                 (or " " "\t")))
+                                        nil t)
+                (replace-match "" nil nil))))
+        ;; Restore previous state even if the hook or unfolding fails.
+        (set-buffer-multibyte was-multibyte))
       ;; return the new end of the region, for format.el conversion:
       (marker-position end-marker))))
 
