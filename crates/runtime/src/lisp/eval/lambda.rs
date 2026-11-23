@@ -608,7 +608,10 @@ impl Interp {
                         other => return Err(self.wrong_type_mut("listp", &other)),
                     };
                     docstring = self.eval_at_compiled_site(&expression, site)?;
-                    body = rest;
+                    // The documentation expression can mutate the live
+                    // lambda form. GNU reads its remaining body cdr only
+                    // after that evaluation.
+                    body = super::cons_parts(self, cell)?.1;
                 }
             }
         }
