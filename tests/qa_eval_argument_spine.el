@@ -340,6 +340,32 @@
           (eval (list 'let* bindings nil))
         (circular-list (list (car err) qa-eval-circular-let-count))))
     '(circular-list ran))
+(defvar qa-eval-letstar-repair-count 0)
+(qa (progn
+      (setq qa-eval-letstar-repair-count 0)
+      (let* ((second-cell (cons nil nil))
+             (first-init
+              (list 'setcdr
+                    (list 'quote second-cell)
+                    (list 'quote second-cell)))
+             (second-init
+              (list 'progn
+                    (list 'setq 'qa-eval-letstar-repair-count
+                          (list '1+ 'qa-eval-letstar-repair-count))
+                    (list 'if
+                          (list '= 'qa-eval-letstar-repair-count 2)
+                          (list 'setcdr (list 'quote second-cell) nil))
+                    nil))
+             (first-spec (list 'qa-eval-letstar-a first-init))
+             (second-spec (list 'qa-eval-letstar-b second-init))
+             (bindings (cons first-spec second-cell))
+             (form (list 'let* bindings 'qa-eval-letstar-repair-count)))
+        (setcar second-cell second-spec)
+        (list (condition-case err
+                  (eval form nil)
+                (error (list :error (car err))))
+              qa-eval-letstar-repair-count)))
+    '(2 2))
 
 ;; Circular `setq' arguments are rejected before any RHS is evaluated.
 (defvar qa-eval-circular-setq-side-effect nil)

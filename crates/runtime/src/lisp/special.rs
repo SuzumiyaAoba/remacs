@@ -641,26 +641,54 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
     }
 }
 
+/// GNU's `FOR_EACH_TAIL` cycle check for sequential `let*` bindings uses
+/// Brent checkpoints.  Checkpoint boundaries advance without comparing, so
+/// a binding initializer can repair a cycle before the repeated cell is
+/// rejected.
+struct LetStarTailCycleCheck {
+    tortoise: Value,
+    power: usize,
+    steps: usize,
+}
+
+impl LetStarTailCycleCheck {
+    fn new(head: Value) -> Self {
+        Self {
+            tortoise: head,
+            power: 2,
+            steps: 0,
+        }
+    }
+
+    fn advance(&mut self, tail: &Value) -> bool {
+        self.steps += 1;
+        if self.steps == self.power {
+            self.tortoise = tail.clone();
+            self.power = self.power.saturating_mul(2);
+            self.steps = 0;
+            return false;
+        }
+        matches!(
+            (&self.tortoise, tail),
+            (Value::Cons(a), Value::Cons(b)) if Rc::ptr_eq(a, b)
+        )
+    }
+}
+
 fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     let mut cur = car(i, &args)?;
+    let mut binding_cycle = LetStarTailCycleCheck::new(cur.clone());
     if i.lexical_binding_active() {
         let frame = crate::lisp::eval::lexenv_extend_checked(&i.lexenv)
             .map_err(|error| error.into_flow(i))?;
         let mark = i.specbind_depth();
         let saved = std::mem::replace(&mut i.lexenv, Some(frame.clone()));
         let mut r = Ok(Value::Nil);
-        let mut seen_bindings = FxHashSet::default();
         let mut until_quit = 1024usize;
         loop {
             let cell = match cur.clone() {
                 Value::Nil => break,
-                Value::Cons(cell) => {
-                    if !seen_bindings.insert(Rc::as_ptr(&cell) as usize) {
-                        r = Err(i.signal_data(sym::CIRCULAR_LIST, vec![Value::Cons(cell.clone())]));
-                        break;
-                    }
-                    cell
-                }
+                Value::Cons(cell) => cell,
                 _ => {
                     let varlist = match car(i, &args) {
                         Ok(varlist) => varlist,
@@ -707,6 +735,10 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
                     break;
                 }
             };
+            if binding_cycle.advance(&cur) {
+                r = Err(i.signal_data(sym::CIRCULAR_LIST, vec![cur.clone()]));
+                break;
+            }
             until_quit -= 1;
             if until_quit == 0 {
                 if let Err(error) = i.maybe_quit() {
@@ -729,18 +761,11 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
     } else {
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
-        let mut seen_bindings = FxHashSet::default();
         let mut until_quit = 1024usize;
         loop {
             let cell = match cur.clone() {
                 Value::Nil => break,
-                Value::Cons(cell) => {
-                    if !seen_bindings.insert(Rc::as_ptr(&cell) as usize) {
-                        r = Err(i.signal_data(sym::CIRCULAR_LIST, vec![Value::Cons(cell.clone())]));
-                        break;
-                    }
-                    cell
-                }
+                Value::Cons(cell) => cell,
                 _ => {
                     let varlist = match car(i, &args) {
                         Ok(varlist) => varlist,
@@ -787,6 +812,10 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
                     break;
                 }
             };
+            if binding_cycle.advance(&cur) {
+                r = Err(i.signal_data(sym::CIRCULAR_LIST, vec![cur.clone()]));
+                break;
+            }
             until_quit -= 1;
             if until_quit == 0 {
                 if let Err(error) = i.maybe_quit() {
