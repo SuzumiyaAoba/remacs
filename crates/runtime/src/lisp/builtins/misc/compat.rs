@@ -523,6 +523,11 @@ pub(super) fn f_current_bidi_paragraph_direction(
         },
     };
     let buffer_id = buffer.borrow().id;
+    if !crate::frontend::buffer_setting(i, "bidi-display-reordering", buffer_id).truthy()
+        || !crate::frontend::buffer_setting(i, "enable-multibyte-characters", buffer_id).truthy()
+    {
+        return Ok(Value::Sym(i.q("left-to-right")));
+    }
     let configured_direction =
         crate::frontend::buffer_setting(i, "bidi-paragraph-direction", buffer_id);
     if !configured_direction.is_nil() {
