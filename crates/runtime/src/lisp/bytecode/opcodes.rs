@@ -646,8 +646,9 @@ pub(super) fn step_op(
         // used by old byte-code; both forms record the current buffer for
         // a later `unbind'.
         97 | 114 => unwinds.push(Unwind::SaveCurrentBuffer(i.current_buffer)),
-        // interactive-p (obsolete since Emacs 23, never emitted).
-        116 => push!(Value::Nil),
+        // Obsolete byte-code still calls `interactive-p' and pushes its
+        // result when loaded from old compiled files.
+        116 => scall!("interactive-p", 0),
         117 => scall!("forward-char", 1),
         118 => scall!("forward-word", 1),
         119 => scall!("skip-chars-forward", 2),
