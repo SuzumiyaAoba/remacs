@@ -579,6 +579,22 @@ pub fn run_gui_with_dump(
         if let Err(error) = register_native_service_provider(event_tx.clone()) {
             eprintln!("remacs: macOS Services input unavailable: {error}");
         }
+        let default_initial_bounds = Bounds::centered(None, initial_window_size, cx);
+        let initial_window_bounds = initial_frame_size
+            .filter(|frame| frame.has_position_parameter)
+            .and_then(|frame| {
+                let display = cx.primary_display()?;
+                let origin = frame_position_for_bounds(
+                    frame.left,
+                    frame.top,
+                    display.bounds(),
+                    initial_window_size,
+                    false,
+                    default_initial_bounds.origin,
+                );
+                Some(Bounds::new(origin, initial_window_size))
+            })
+            .unwrap_or(default_initial_bounds);
         cx.spawn(async move |cx| {
             while let Ok(request) = clipboard_requests.recv().await {
                 match request {
@@ -650,13 +666,14 @@ pub fn run_gui_with_dump(
         .detach();
         let primary_window = match cx.open_window(
             WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                    None,
-                    initial_window_size,
-                    cx,
-                ))),
+                window_bounds: Some(WindowBounds::Windowed(initial_window_bounds)),
                 focus: initial_focus_on_map,
                 window_min_size: initial_min_size,
+                position_specified: initial_frame_size
+                    .is_some_and(|frame| frame.has_position_parameter),
+                user_position: initial_frame_size.is_some_and(|frame| frame.user_position),
+                size_specified: initial_frame_size.is_some_and(|frame| frame.has_size_parameter),
+                user_size: initial_frame_size.is_some_and(|frame| frame.user_size),
                 ..Default::default()
             },
             |window, cx| {
@@ -2163,6 +2180,10 @@ fn frame_window_options(
     WindowOptions {
         window_bounds: Some(window_bounds),
         window_min_size,
+        position_specified: has_position,
+        user_position: frame.user_position,
+        size_specified: frame.width_size.is_some() || frame.height_size.is_some(),
+        user_size: frame.user_size,
         window_background: frame_background_appearance(frame),
         display_id: display_id.map(DisplayId::from),
         kind: if child {

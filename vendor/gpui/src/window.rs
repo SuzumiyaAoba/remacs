@@ -945,6 +945,10 @@ impl Window {
     ) -> Result<Self> {
         let WindowOptions {
             window_bounds,
+            position_specified,
+            user_position,
+            size_specified,
+            user_size,
             titlebar,
             focus,
             show,
@@ -972,6 +976,10 @@ impl Window {
             handle,
             WindowParams {
                 bounds,
+                position_specified,
+                user_position,
+                size_specified,
+                user_size,
                 titlebar,
                 kind,
                 #[cfg(target_os = "macos")]

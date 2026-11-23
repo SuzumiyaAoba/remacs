@@ -17,7 +17,7 @@ use x11rb::{
     connection::Connection,
     cookie::{Cookie, VoidCookie},
     errors::ConnectionError,
-    properties::WmSizeHints,
+    properties::{WmSizeHints, WmSizeHintsSpecification},
     protocol::{
         sync,
         xinput::{self, ConnectionExt as _},
@@ -498,15 +498,42 @@ impl X11WindowState {
                 ),
             )?;
 
+            let mut size_hints = WmSizeHints::new();
+            if params.position_specified {
+                size_hints.position = Some((
+                    if params.user_position {
+                        WmSizeHintsSpecification::UserSpecified
+                    } else {
+                        WmSizeHintsSpecification::ProgramSpecified
+                    },
+                    bounds.origin.x.0,
+                    bounds.origin.y.0,
+                ));
+            }
+            if params.size_specified {
+                size_hints.size = Some((
+                    if params.user_size {
+                        WmSizeHintsSpecification::UserSpecified
+                    } else {
+                        WmSizeHintsSpecification::ProgramSpecified
+                    },
+                    bounds.size.width.0 as i32,
+                    bounds.size.height.0 as i32,
+                ));
+            }
             if let Some(size) = params.window_min_size {
-                let mut size_hints = WmSizeHints::new();
                 let min_size = (size.width.0 as i32, size.height.0 as i32);
                 size_hints.min_size = Some(min_size);
+            }
+            if size_hints.position.is_some()
+                || size_hints.size.is_some()
+                || size_hints.min_size.is_some()
+            {
                 check_reply(
                     || {
                         format!(
-                            "X11 change of WM_SIZE_HINTS failed. min_size: {:?}",
-                            min_size
+                            "X11 change of WM_SIZE_HINTS failed. position: {:?}, size: {:?}, min_size: {:?}",
+                            size_hints.position, size_hints.size, size_hints.min_size
                         )
                     },
                     size_hints.set_normal_hints(xcb, x_window),

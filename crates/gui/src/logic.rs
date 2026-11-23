@@ -585,6 +585,8 @@ pub(super) struct FrameSnapshot {
     pub internal_border_width: usize,
     pub left: Option<FramePosition>,
     pub top: Option<FramePosition>,
+    pub user_position: bool,
+    pub user_size: bool,
     pub undecorated: bool,
     pub ns_transparent_titlebar: bool,
     pub ns_appearance: Option<gpui::WindowAppearance>,
@@ -656,6 +658,8 @@ fn frame_snapshot(
         internal_border_width,
         left: frame_position_parameter(i, frame, "left"),
         top: frame_position_parameter(i, frame, "top"),
+        user_position: frame_parameter_value(i, frame, "user-position").truthy(),
+        user_size: frame_parameter_value(i, frame, "user-size").truthy(),
         undecorated: frame_parameter_value(i, frame, "undecorated").truthy(),
         ns_transparent_titlebar: frame_parameter_value(i, frame, "ns-transparent-titlebar")
             .truthy(),
@@ -738,6 +742,11 @@ pub(super) struct InitialFrameSize {
     pub height: usize,
     pub internal_border_width: usize,
     pub has_size_parameter: bool,
+    pub left: Option<FramePosition>,
+    pub top: Option<FramePosition>,
+    pub has_position_parameter: bool,
+    pub user_position: bool,
+    pub user_size: bool,
     pub no_accept_focus: bool,
     pub no_focus_on_map: bool,
     pub skip_taskbar: bool,
@@ -4732,6 +4741,8 @@ fn start_logic_inner(
                         frame_alist_sets_size(&i, &alist)
                     })
                 });
+                let left = frame_position_parameter(&i, frame, "left");
+                let top = frame_position_parameter(&i, frame, "top");
                 let frame_state = frame.borrow();
                 InitialFrameSize {
                     width: frame_state.width,
@@ -4739,6 +4750,11 @@ fn start_logic_inner(
                     internal_border_width: frame_minimum(&i, frame, "internal-border-width")
                         .unwrap_or(0),
                     has_size_parameter,
+                    left,
+                    top,
+                    has_position_parameter: left.is_some() || top.is_some(),
+                    user_position: frame_parameter_value(&i, frame, "user-position").truthy(),
+                    user_size: frame_parameter_value(&i, frame, "user-size").truthy(),
                     no_accept_focus: frame_parameter_value(&i, frame, "no-accept-focus").truthy(),
                     no_focus_on_map: frame_parameter_value(&i, frame, "no-focus-on-map").truthy(),
                     skip_taskbar: frame_parameter_value(&i, frame, "skip-taskbar").truthy(),

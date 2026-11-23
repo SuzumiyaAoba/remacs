@@ -1252,6 +1252,18 @@ pub struct WindowOptions {
     /// - `Some(WindowBounds)`: Open a window with corresponding state and its restore size.
     pub window_bounds: Option<WindowBounds>,
 
+    /// Whether the initial position was explicitly requested.
+    pub position_specified: bool,
+
+    /// Whether the initial position should be advertised as user-specified.
+    pub user_position: bool,
+
+    /// Whether the initial size was explicitly requested.
+    pub size_specified: bool,
+
+    /// Whether the initial size should be advertised as user-specified.
+    pub user_size: bool,
+
     /// The titlebar configuration of the window
     pub titlebar: Option<TitlebarOptions>,
 
@@ -1311,8 +1323,16 @@ pub struct WindowOptions {
     ),
     allow(dead_code)
 )]
+#[cfg_attr(
+    not(all(any(target_os = "linux", target_os = "freebsd"), feature = "x11")),
+    allow(dead_code)
+)]
 pub(crate) struct WindowParams {
     pub bounds: Bounds<Pixels>,
+    pub position_specified: bool,
+    pub user_position: bool,
+    pub size_specified: bool,
+    pub user_size: bool,
 
     /// The titlebar configuration of the window
     #[cfg_attr(feature = "wayland", allow(dead_code))]
@@ -1446,6 +1466,10 @@ impl Default for WindowOptions {
     fn default() -> Self {
         Self {
             window_bounds: None,
+            position_specified: false,
+            user_position: false,
+            size_specified: false,
+            user_size: false,
             titlebar: Some(TitlebarOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
