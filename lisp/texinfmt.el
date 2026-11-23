@@ -1064,37 +1064,77 @@ Leave point after argument."
     (setq texinfo-command-end (point))
     (nreverse args)))
 
-(defun texinfo-format-parse-args ()
-  (let (;; (start (1- (point)))
-        next beg end
-        args)
-    (search-forward "{")
+(defun texinfo-format--next-arg-delimiter ()
+  "Move to and return the next top-level comma or closing brace."
+  (let ((brace-depth 0)
+        found)
+    (while (and (not found) (< (point) (point-max)))
+      (let ((character (char-after)))
+        (cond
+         ;; Escaped @, {, and } are literal characters, not commands or
+         ;; argument delimiters.
+         ((eq character ?@)
+          (forward-char 1)
+          (when (memq (char-after) '(?@ ?{ ?}))
+            (forward-char 1)))
+         ((eq character ?{)
+          (setq brace-depth (1+ brace-depth))
+          (forward-char 1))
+         ((eq character ?})
+          (if (= brace-depth 0)
+              (setq found (point))
+            (setq brace-depth (1- brace-depth))
+            (forward-char 1)))
+         ((and (eq character ?,) (= brace-depth 0))
+          (setq found (point)))
+         (t (forward-char 1)))))
+    found))
+
+(defun texinfo-format--expand-arg (begin end)
+  "Expand Texinfo commands between BEGIN and END and return the text."
+  (when (< (marker-position begin) (marker-position end))
+    (texinfo-format-expand-region (marker-position begin) (marker-position end))
     (save-excursion
-      (texinfo-format-expand-region
-       (point)
-       (save-excursion (up-list 1) (1- (point)))))
-    ;; The following does not handle cross references of the form:
-    ;; `@xref{bullet, , @code{@@bullet}@{@}}.' because the
-    ;; re-search-forward finds the first right brace after the second
-    ;; comma.
-    (while (/= (preceding-char) ?\})
-      (skip-chars-forward " \t\n")
-      (setq beg (point))
-      (re-search-forward "[},]")
-      (setq next (point))
-      (forward-char -1)
-      (skip-chars-backward " \t\n")
-      (setq end (point))
-      (cond ((< beg end)
-             (goto-char beg)
-             (while (search-forward "\n" end t)
-               (replace-match " "))))
-      (push (if (> end beg) (buffer-substring-no-properties beg end))
-            args)
-      (goto-char next))
-    ;;(if (eolp) (forward-char 1))
-    (setq texinfo-command-end (point))
-    (nreverse args)))
+      (goto-char begin)
+      (while (search-forward "\n" end t)
+        (replace-match " ")))
+    (buffer-substring-no-properties begin end)))
+
+(defun texinfo-format-parse-args ()
+  (let (ranges args delimiter done
+        (command-end-marker (make-marker)))
+    (search-forward "{")
+    (unwind-protect
+        (progn
+          (while (not done)
+            (skip-chars-forward " \t\n")
+            (let ((begin-marker (copy-marker (point)))
+                  (delimiter-position
+                   (texinfo-format--next-arg-delimiter)))
+              (unless delimiter-position
+                (signal 'search-failed (list "[},]")))
+              (goto-char delimiter-position)
+              (skip-chars-backward " \t\n")
+              (let ((end-marker (copy-marker (point) t)))
+                (push (list begin-marker end-marker) ranges))
+              (setq delimiter (char-after delimiter-position))
+              (goto-char (1+ delimiter-position))
+              (if (eq delimiter ?,)
+                  (skip-chars-forward " \t\n")
+                (setq done t)
+                (set-marker command-end-marker (point)))))
+          ;; RANGES is in reverse order, so expand from right to left and
+          ;; keep the positions of earlier arguments stable.
+          (dolist (range ranges)
+            (push (texinfo-format--expand-arg (car range) (cadr range))
+                  args))
+          (setq texinfo-command-end (marker-position command-end-marker))
+          (goto-char texinfo-command-end)
+          args)
+      (dolist (range ranges)
+        (set-marker (car range) nil)
+        (set-marker (cadr range) nil))
+      (set-marker command-end-marker nil))))
 
 (defun texinfo-format-parse-defun-args ()
   (goto-char texinfo-command-end)
