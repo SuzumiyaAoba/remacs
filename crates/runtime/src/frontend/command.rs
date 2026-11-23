@@ -3262,19 +3262,32 @@ fn dispatch_frame_moved(
     else {
         return Ok(());
     };
-    let left_parameter = Value::Sym(i.q("left"));
-    let top_parameter = Value::Sym(i.q("top"));
+    let left_symbol = i.q("left");
+    let top_symbol = i.q("top");
     let mut parameters = frame.borrow().params.clone();
-    parameters = crate::lisp::eval::plist_put_front(&parameters, &left_parameter, Value::Int(left));
-    parameters = crate::lisp::eval::plist_put_front(&parameters, &top_parameter, Value::Int(top));
+    let old_left = crate::lisp::eval::plist_get(&parameters, left_symbol)
+        .int()
+        .unwrap_or(0);
+    let old_top = crate::lisp::eval::plist_get(&parameters, top_symbol)
+        .int()
+        .unwrap_or(0);
+    parameters = crate::lisp::eval::plist_put_front(
+        &parameters,
+        &Value::Sym(left_symbol),
+        Value::Int(left),
+    );
+    parameters = crate::lisp::eval::plist_put_front(
+        &parameters,
+        &Value::Sym(top_symbol),
+        Value::Int(top),
+    );
     frame.borrow_mut().params = parameters;
 
-    if i.gui_mouse_frame_position
-        .is_some_and(|(cached_frame_id, _, _)| cached_frame_id == frame_id)
-        && let Some((absolute_x, absolute_y)) = i.gui_mouse_absolute_position
+    if let Some((cached_frame_id, pixel_x, pixel_y)) = i.gui_mouse_frame_pixel_position
+        && cached_frame_id == frame_id
     {
-        let pixel_x = absolute_x.saturating_sub(left);
-        let pixel_y = absolute_y.saturating_sub(top);
+        let pixel_x = pixel_x.saturating_sub(left.saturating_sub(old_left));
+        let pixel_y = pixel_y.saturating_sub(top.saturating_sub(old_top));
         let char_width = crate::editor::frame_char_width(i, &frame).max(1) as i128;
         let char_height = crate::editor::frame_char_height(i, &frame).max(1) as i128;
         i.gui_mouse_frame_pixel_position = Some((frame_id, pixel_x, pixel_y));

@@ -2,11 +2,10 @@
 use remacs_runtime::{
     frontend::{
         AppleScriptResult, ClipboardInfo, DragAction, FontSelection, FrameFontMetrics,
-        FrameVisibility, Grid,
-        GridImageSource,
-        GridScrollBarOrientation, InputEvent, KeyIo, MouseArea, MouseButton, MouseInput,
-        MousePosition, MouseWheelDirection, NativeMenuCommandId, QuitRequest,
-        fit_text_to_cells_with_tab_width, render_frame_grid_with_mouse_position_cached,
+        FrameVisibility, Grid, GridImageSource, GridScrollBarOrientation, InputEvent, KeyIo,
+        MouseArea, MouseButton, MouseInput, MousePosition, MouseWheelDirection,
+        NativeMenuCommandId, QuitRequest, fit_text_to_cells_with_tab_width,
+        frame_relative_mouse_position, render_frame_grid_with_mouse_position_cached,
         render_grid_with_mouse_position_cached,
     },
     lisp::{Interp, Value},
@@ -941,6 +940,8 @@ pub(super) struct GuiGeometry {
     pub scale_factor: f64,
     pub frame_left: i128,
     pub frame_top: i128,
+    /// Pixel offset from the outer frame origin to the content origin.
+    pub content_top_offset: i128,
     pub fullscreen: bool,
     pub maximized: bool,
     pub current_display_id: Option<u32>,
@@ -3305,16 +3306,17 @@ impl KeyIo for ChanIo {
                     Some(id) => self.frame_geometries.get(&id),
                     None => self.geometry.as_ref(),
                 };
-                let frame_pixel_position = absolute_position.and_then(|(x, y)| {
+                let frame_positions = absolute_position.and_then(|absolute| {
                     let geometry = geometry?;
-                    Some((x - geometry.frame_left, y - geometry.frame_top))
+                    Some(frame_relative_mouse_position(
+                        absolute,
+                        (geometry.frame_left, geometry.frame_top),
+                        geometry.content_top_offset,
+                        (geometry.char_width, geometry.char_height),
+                    ))
                 });
-                let frame_position = frame_pixel_position.and_then(|(x, y)| {
-                    let geometry = geometry?;
-                    let char_width = geometry.char_width.max(1);
-                    let char_height = geometry.char_height.max(1);
-                    Some((x.div_euclid(char_width), y.div_euclid(char_height)))
-                });
+                let frame_pixel_position = frame_positions.map(|(pixels, _)| pixels);
+                let frame_position = frame_positions.map(|(_, cells)| cells);
                 let frame_position_changed =
                     self.mouse_frame_position != Some((frame_id, frame_position, text_window_id));
                 self.mouse_frame_position = Some((frame_id, frame_position, text_window_id));
@@ -4275,6 +4277,7 @@ mod frame_font_metrics_event_tests {
             })
         ));
     }
+
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -4312,6 +4315,7 @@ mod native_frame_geometry_tests {
                     scale_factor: 1.0,
                     frame_left: 10,
                     frame_top: 20,
+                    content_top_offset: 20,
                     fullscreen: false,
                     maximized: false,
                     current_display_id: None,
@@ -4370,6 +4374,7 @@ mod native_fullscreen_state_tests {
             scale_factor: 1.0,
             frame_left: 10,
             frame_top: 20,
+            content_top_offset: 20,
             fullscreen,
             maximized,
             current_display_id: None,

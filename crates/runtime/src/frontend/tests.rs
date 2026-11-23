@@ -2540,8 +2540,14 @@ fn frame_move_recomputes_cached_mouse_position_from_absolute_coordinates() {
     let frame = i.selected_frame.as_ref().unwrap().clone();
     let frame_id = frame.borrow().id;
     i.gui_mouse_absolute_position = Some((110, 60));
-    i.gui_mouse_frame_position = Some((frame_id, 40, 30));
-    i.gui_mouse_frame_pixel_position = Some((frame_id, 40, 30));
+    i.gui_mouse_frame_position = Some((frame_id, 40, 20));
+    i.gui_mouse_frame_pixel_position = Some((frame_id, 40, 20));
+    let left = Value::Sym(i.q("left"));
+    let top = Value::Sym(i.q("top"));
+    let mut params = frame.borrow().params.clone();
+    params = crate::lisp::eval::plist_put_front(&params, &left, Value::Int(70));
+    params = crate::lisp::eval::plist_put_front(&params, &top, Value::Int(40));
+    frame.borrow_mut().params = params;
 
     let char_width = crate::editor::frame_char_width(&i, &frame).max(1) as i128;
     let char_height = crate::editor::frame_char_height(&i, &frame).max(1) as i128;

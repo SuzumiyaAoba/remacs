@@ -759,6 +759,27 @@ pub struct MousePosition {
     pub mode_line_buffer_name: bool,
 }
 
+/// Convert an absolute pointer position to content-relative frame pixels and cells.
+pub fn frame_relative_mouse_position(
+    absolute: (i128, i128),
+    frame_origin: (i128, i128),
+    content_top_offset: i128,
+    cell_size: (i128, i128),
+) -> ((i128, i128), (i128, i128)) {
+    let pixel_position = (
+        absolute.0.saturating_sub(frame_origin.0),
+        absolute
+            .1
+            .saturating_sub(frame_origin.1)
+            .saturating_sub(content_top_offset),
+    );
+    let cell_position = (
+        pixel_position.0.div_euclid(cell_size.0.max(1)),
+        pixel_position.1.div_euclid(cell_size.1.max(1)),
+    );
+    (pixel_position, cell_position)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MouseInput {
     pub button: MouseButton,
