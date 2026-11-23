@@ -16,6 +16,7 @@ pub(super) struct SymbolState {
     pub special: bool,
     pub constant: bool,
     pub make_local_if_set: bool,
+    pub localized_variable: bool,
 }
 
 impl SymbolState {
@@ -27,6 +28,7 @@ impl SymbolState {
             special: symbol.special,
             constant: symbol.constant,
             make_local_if_set: symbol.make_local_if_set,
+            localized_variable: symbol.localized_variable,
         }
     }
 }
@@ -40,6 +42,7 @@ impl Default for SymbolState {
             special: false,
             constant: false,
             make_local_if_set: false,
+            localized_variable: false,
         }
     }
 }

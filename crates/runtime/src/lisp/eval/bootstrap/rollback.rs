@@ -60,6 +60,7 @@ fn restore_symbols(
             special: sp,
             constant: cn,
             make_local_if_set: ml,
+            localized_variable: lv,
         } = pre_boot_syms.get(&sid).cloned().unwrap_or_default();
         // A name the rolled file *defined* voids unless a kept
         // file also defines it: prelude's own defs were already
@@ -90,6 +91,7 @@ fn restore_symbols(
             s.special = if force_void { false } else { sp };
             s.constant = if force_void { false } else { cn };
             s.make_local_if_set = if force_void { false } else { ml };
+            s.localized_variable = if force_void { false } else { lv };
             s.variable_documentation = None;
             s.var_alias = None;
         }

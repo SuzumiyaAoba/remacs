@@ -1031,6 +1031,7 @@ fn f_defvaralias(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
     if i.obarray.symbol(newv).builtin_variable
         || i.obarray.symbol(newv).always_local
         || i.obarray.symbol(newv).make_local_if_set
+        || i.obarray.symbol(newv).localized_variable
     {
         let name = i.symbol_name(newv).to_string();
         return Err(i.error(&format!(

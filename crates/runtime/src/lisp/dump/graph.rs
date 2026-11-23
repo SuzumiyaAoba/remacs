@@ -180,6 +180,8 @@ pub(super) struct SymbolData {
     pub function: Ref,
     pub plist: Ref,
     pub flags: [bool; 7],
+    #[serde(default)]
+    pub localized_variable: bool,
     pub documentation: Option<Vec<u32>>,
     pub alias: Option<Ref>,
 }
@@ -394,6 +396,7 @@ impl<'a> Encoder<'a> {
                             symbol.forwarded_variable,
                             symbol.uninterned,
                         ],
+                        localized_variable: symbol.localized_variable,
                         documentation: symbol.variable_documentation.as_deref().map(encode_text),
                         alias: symbol.var_alias.map(|id| self.symbol(id)).transpose()?,
                     };
@@ -1081,6 +1084,7 @@ impl<'a> Decoder<'a> {
                     symbol.forwarded_variable,
                     symbol.uninterned,
                 ] = data.flags;
+                symbol.localized_variable = data.localized_variable;
                 symbol.variable_documentation = data.documentation.as_deref().map(decode_text);
                 symbol.var_alias = alias;
                 if data.flags[5] && decode_text(&data.name) == "symbols-with-pos-enabled" {

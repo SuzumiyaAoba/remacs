@@ -4559,6 +4559,7 @@ fn f_make_local_variable(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
         // (the unbound sentinel) when the variable is unbound.
         bb.locals.insert(sid, seed);
     }
+    i.obarray.symbol_mut(sid).localized_variable = true;
     Ok(if per_buffer { a[0].clone() } else { i.sym(sid) })
 }
 

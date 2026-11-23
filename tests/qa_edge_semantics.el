@@ -79,6 +79,21 @@
         (error qa-edge-base))) 9)
 (qa-err (with-temp-buffer (make-local-variable 'qa-edge-local)
           (defvaralias 'qa-edge-local 'qa-edge-base)) 'error)
+(qa-err (let* ((alias (intern "qa-edge-local-killed"))
+               (base (intern "qa-edge-local-killed-base"))
+               (buffer (generate-new-buffer " *qa-local*")))
+          (unwind-protect
+              (with-current-buffer buffer (make-local-variable alias))
+            (kill-buffer buffer))
+          (defvaralias alias base))
+        'error)
+(qa-err (let* ((alias (intern "qa-edge-local-cleared"))
+               (base (intern "qa-edge-local-cleared-base")))
+          (with-temp-buffer
+            (make-local-variable alias)
+            (kill-local-variable alias))
+          (defvaralias alias base))
+        'error)
 
 (qa (time-convert '(1 2 . 3) 'list) '(1 2 3 0))
 (qa (time-convert '(1 2 3 . ignored) 'list) '(1 2 3 0))
