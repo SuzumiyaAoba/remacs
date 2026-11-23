@@ -1101,21 +1101,31 @@ mod static_modifier_symbol_tests {
 }
 
 pub(super) fn f_mouse_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
-    if let Some((frame_id, x, y)) = i.gui_mouse_frame_position
+    let position = if let Some((frame_id, x, y)) = i.gui_mouse_frame_position
         && let Some(frame) = i
             .frames
             .iter()
             .find(|frame| frame.borrow().id == frame_id && !frame.borrow().dead)
             .cloned()
     {
-        return Ok(Value::cons(
+        Value::cons(
             Value::Frame(frame),
             Value::cons(Value::Int(x), Value::Int(y)),
-        ));
+        )
+    } else {
+        // Emacs: (FRAME nil) on a tty with no mouse position.
+        let frame = sel_frame(i).map(Value::Frame).unwrap_or(Value::Nil);
+        Value::list(vec![frame, Value::Nil])
+    };
+    let function = i
+        .q_soft("mouse-position-function")
+        .map(|symbol| i.symbol_value(symbol))
+        .unwrap_or(Value::Nil);
+    if function.is_nil() {
+        Ok(position)
+    } else {
+        i.apply(&function, vec![position])
     }
-    // Emacs: (FRAME nil) on a tty with no mouse position.
-    let frame = sel_frame(i).map(Value::Frame).unwrap_or(Value::Nil);
-    Ok(Value::list(vec![frame, Value::Nil]))
 }
 
 pub(super) fn f_mouse_pixel_position(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
