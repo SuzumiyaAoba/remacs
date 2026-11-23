@@ -2034,7 +2034,10 @@ fn macroexpand_all_expanded(
                         out.extend(eargs);
                         return Ok(Value::list(out));
                     }
-                    sym::CONDITION_CASE if items.len() >= 3 => {
+                    sym::CONDITION_CASE if items.len() == 3 => {
+                        return macroexpand_all_recur(i, &items[2]);
+                    }
+                    sym::CONDITION_CASE if items.len() >= 4 => {
                         // GNU `cl--sm-macroexpand-1': the error var
                         // shadows a same-named symbol macro in the
                         // protected form AND the handler bodies.
