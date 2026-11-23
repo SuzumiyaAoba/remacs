@@ -864,7 +864,9 @@ impl Interp {
                 Value::Sym(sym::QUOTE) => ("'", bq),
                 Value::Sym(sym::FUNCTION) => ("#'", bq),
                 Value::Sym(sym::BACKQUOTE) => ("`", true),
-                Value::Sym(sym::COMMA) if bq => (",", bq),
+                // The argument of an unquote is outside the enclosing
+                // backquote; nested comma forms there must print as data.
+                Value::Sym(sym::COMMA) if bq => (",", false),
                 Value::Sym(sym::COMMA_AT) if bq => (",@", bq),
                 Value::Sym(sym::COMMA_DOT) if bq => (",.", bq),
                 _ => return Ok(None),
