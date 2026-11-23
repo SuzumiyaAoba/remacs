@@ -2533,3 +2533,28 @@ fn gui_mouse_autoselect_preserves_the_active_minibuffer_selection() {
     assert!(keys.is_empty());
     assert!(!arg_mode);
 }
+
+#[test]
+fn frame_move_recomputes_cached_mouse_position_from_absolute_coordinates() {
+    let mut i = interp_with_frame("");
+    let frame = i.selected_frame.as_ref().unwrap().clone();
+    let frame_id = frame.borrow().id;
+    i.gui_mouse_absolute_position = Some((110, 60));
+    i.gui_mouse_frame_position = Some((frame_id, 40, 30));
+    i.gui_mouse_frame_pixel_position = Some((frame_id, 40, 30));
+
+    let char_width = crate::editor::frame_char_width(&i, &frame).max(1) as i128;
+    let char_height = crate::editor::frame_char_height(&i, &frame).max(1) as i128;
+    super::dispatch_frame_moved(&mut i, frame_id, 20, 10).unwrap();
+
+    assert_eq!(i.gui_mouse_absolute_position, Some((110, 60)));
+    assert_eq!(i.gui_mouse_frame_pixel_position, Some((frame_id, 90, 50)));
+    assert_eq!(
+        i.gui_mouse_frame_position,
+        Some((
+            frame_id,
+            90_i128.div_euclid(char_width),
+            50_i128.div_euclid(char_height),
+        ))
+    );
+}

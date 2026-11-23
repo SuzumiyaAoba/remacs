@@ -3264,6 +3264,22 @@ fn dispatch_frame_moved(
     parameters = crate::lisp::eval::plist_put_front(&parameters, &top_parameter, Value::Int(top));
     frame.borrow_mut().params = parameters;
 
+    if i.gui_mouse_frame_position
+        .is_some_and(|(cached_frame_id, _, _)| cached_frame_id == frame_id)
+        && let Some((absolute_x, absolute_y)) = i.gui_mouse_absolute_position
+    {
+        let pixel_x = absolute_x.saturating_sub(left);
+        let pixel_y = absolute_y.saturating_sub(top);
+        let char_width = crate::editor::frame_char_width(i, &frame).max(1) as i128;
+        let char_height = crate::editor::frame_char_height(i, &frame).max(1) as i128;
+        i.gui_mouse_frame_pixel_position = Some((frame_id, pixel_x, pixel_y));
+        i.gui_mouse_frame_position = Some((
+            frame_id,
+            pixel_x.div_euclid(char_width),
+            pixel_y.div_euclid(char_height),
+        ));
+    }
+
     let hook = Value::Sym(i.q("move-frame-functions"));
     let runner = Value::Sym(i.q("run-hook-with-args"));
     i.apply(&runner, vec![hook, Value::Frame(frame)])?;
