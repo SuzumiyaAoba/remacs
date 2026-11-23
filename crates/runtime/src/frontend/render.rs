@@ -9549,8 +9549,25 @@ fn read_stipple_file(i: &Interp, file: &EmacsStr, default_directory: &EmacsStr) 
     None
 }
 
+fn expand_home_relative_image_path(i: &Interp, file: &str) -> Option<String> {
+    let rest = file.strip_prefix('~')?;
+    if !rest.is_empty() && !rest.starts_with('/') {
+        return None;
+    }
+    let home = crate::editor::lisp_getenv(i, "HOME")
+        .or_else(|| std::env::var_os("HOME").map(|value| EmacsText::from_os_str(&value)))
+        .unwrap_or_else(|| EmacsText::from("/"));
+    Some(
+        std::path::PathBuf::from(home.to_unicode_lossy())
+            .join(rest.trim_start_matches('/'))
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
 fn image_file_for_buffer(i: &Interp, buffer_id: usize, file: &EmacsStr) -> String {
     let file = file.to_unicode_lossy();
+    let file = expand_home_relative_image_path(i, &file).unwrap_or(file);
     let path = std::path::Path::new(&file);
     if path.is_absolute() {
         return file;
@@ -9630,6 +9647,7 @@ fn append_image_load_path_directories(
 
 fn image_file_from_load_path(i: &Interp, buffer_id: usize, file: &EmacsStr) -> Option<String> {
     let file_name = file.to_unicode_lossy();
+    let file_name = expand_home_relative_image_path(i, &file_name).unwrap_or(file_name);
     if std::path::Path::new(&file_name).is_absolute() {
         return Some(file_name);
     }
