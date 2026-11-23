@@ -673,8 +673,15 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
                     }
                     cell
                 }
-                other => {
-                    r = Err(i.wrong_type_mut("listp", &other));
+                _ => {
+                    let varlist = match car(i, &args) {
+                        Ok(varlist) => varlist,
+                        Err(error) => {
+                            r = Err(error);
+                            break;
+                        }
+                    };
+                    r = Err(i.wrong_type_mut("listp", &varlist));
                     break;
                 }
             };
@@ -746,8 +753,15 @@ fn sf_let_star(i: &mut Interp, args: Value) -> EvalResult {
                     }
                     cell
                 }
-                other => {
-                    r = Err(i.wrong_type_mut("listp", &other));
+                _ => {
+                    let varlist = match car(i, &args) {
+                        Ok(varlist) => varlist,
+                        Err(error) => {
+                            r = Err(error);
+                            break;
+                        }
+                    };
+                    r = Err(i.wrong_type_mut("listp", &varlist));
                     break;
                 }
             };
