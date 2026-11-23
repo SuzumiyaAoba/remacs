@@ -1663,20 +1663,52 @@ pub(super) fn f_map_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     // ONE shared RANGE cons it mutates between calls (a lone
     // character is passed as a fixnum) — retained keys all end up
     // showing the final mutation; mirror that.
+    // Freeze the set of character codes that were initially non-nil.
+    // Callbacks may change values and repartition later ranges, but they
+    // must not add newly non-nil spans to this traversal.
+    let mut eligible = Vec::<(u32, u32)>::new();
+    for (from, to, value) in ct_effective_runs(i, &a[1], true) {
+        if value.is_nil() {
+            continue;
+        }
+        if let Some((_, last_to)) = eligible.last_mut()
+            && last_to.saturating_add(1) == from
+        {
+            *last_to = to;
+        } else {
+            eligible.push((from, to));
+        }
+    }
     let range = Value::cons(Value::Int(0), Value::Int(0));
     let mut last: Option<(u32, u32)> = None;
     let mut next_code = 0u32;
+    let mut eligible_index = 0usize;
     loop {
+        let Some((eligible_from, eligible_to)) = eligible.get(eligible_index).copied() else {
+            break;
+        };
+        if next_code < eligible_from {
+            next_code = eligible_from;
+        }
+        if next_code > eligible_to {
+            eligible_index += 1;
+            continue;
+        }
         // Recompute the remaining partition after every callback.  Lisp
         // callbacks can change later values and merge or split their ranges.
         let runs = ct_effective_runs(i, &a[1], true);
-        let Some((run_from, to, _)) = runs
+        let Some((run_from, run_to, _)) = runs
             .into_iter()
             .find(|(_, run_to, _)| *run_to >= next_code)
         else {
             break;
         };
         let from = run_from.max(next_code);
+        if from > eligible_to {
+            eligible_index += 1;
+            continue;
+        }
+        let to = run_to.min(eligible_to);
         let val = ct_map_current_value(i, &a[1], from as usize);
         if val.is_nil() {
             if to == CT_MAX_CHAR {
