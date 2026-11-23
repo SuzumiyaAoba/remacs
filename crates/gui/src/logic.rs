@@ -2925,6 +2925,21 @@ impl ChanIo {
         previous
     }
 
+    fn frame_parameter_position(&self, frame_id: usize, geometry: &GuiGeometry) -> (i128, i128) {
+        let parent_id = self
+            .latest_snapshots
+            .iter()
+            .find(|snapshot| snapshot.frame_id == frame_id)
+            .and_then(|snapshot| snapshot.parent_frame);
+        let Some(parent) = parent_id.and_then(|id| self.frame_geometries.get(&id)) else {
+            return (geometry.frame_left, geometry.frame_top);
+        };
+        (
+            geometry.frame_left.saturating_sub(parent.frame_left),
+            geometry.frame_top.saturating_sub(parent.frame_top),
+        )
+    }
+
     fn record_mouse_down(
         &mut self,
         button: MouseButton,
@@ -3283,10 +3298,11 @@ impl KeyIo for ChanIo {
                 };
                 self.update_size(self.active_frame_id, geometry.cols, geometry.rows);
                 if let Some(frame_id) = frame_move {
+                    let (left, top) = self.frame_parameter_position(frame_id, &geometry);
                     Ok(Some(InputEvent::FrameMoved {
                         frame_id,
-                        left: geometry.frame_left,
-                        top: geometry.frame_top,
+                        left,
+                        top,
                     }))
                 } else {
                     Ok(None)
@@ -3591,8 +3607,8 @@ impl KeyIo for ChanIo {
                 };
                 self.update_size(self.active_frame_id, geometry.cols, geometry.rows);
                 if let Some(frame_id) = moved_frame {
-                    self.pending_frame_moved =
-                        Some((frame_id, geometry.frame_left, geometry.frame_top));
+                    let (left, top) = self.frame_parameter_position(frame_id, &geometry);
+                    self.pending_frame_moved = Some((frame_id, left, top));
                 }
                 Ok(None)
             }
