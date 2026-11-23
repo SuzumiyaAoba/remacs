@@ -1190,41 +1190,96 @@ impl Dispatch<wl_seat::WlSeat, ()> for WaylandClientStatePtr {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities {
+        let wl_seat::Event::Capabilities {
             capabilities: WEnum::Value(capabilities),
         } = event
-        {
-            let client = state.get_client();
-            let mut state = client.borrow_mut();
-            if capabilities.contains(wl_seat::Capability::Keyboard) {
-                let keyboard = seat.get_keyboard(qh, ());
+        else {
+            return;
+        };
 
+        let client = state.get_client();
+        let mut state = client.borrow_mut();
+        let mut keyboard_to_unfocus = None;
+        let mut pointer_to_unhover = None;
+
+        if capabilities.contains(wl_seat::Capability::Keyboard) {
+            if state.wl_keyboard.is_none() {
+                state.wl_keyboard = Some(seat.get_keyboard(qh, ()));
                 state.text_input = state
                     .globals
                     .text_input_manager
                     .as_ref()
                     .map(|text_input_manager| text_input_manager.get_text_input(seat, qh, ()));
-
-                if let Some(wl_keyboard) = &state.wl_keyboard {
-                    wl_keyboard.release();
-                }
-
-                state.wl_keyboard = Some(keyboard);
             }
-            if capabilities.contains(wl_seat::Capability::Pointer) {
+        } else {
+            if let Some(keyboard) = state.wl_keyboard.take() {
+                keyboard.release();
+            }
+            if let Some(text_input) = state.text_input.take() {
+                text_input.destroy();
+            }
+            keyboard_to_unfocus = state.keyboard_focused_window.take();
+            state.enter_token = None;
+            state.repeat.current_id = state.repeat.current_id.wrapping_add(1);
+            state.repeat.current_keycode = None;
+            state.keymap_state = None;
+            state.compose_state = None;
+            state.pre_edit_text = None;
+            state.ime_pre_edit = None;
+            state.composing = false;
+            state.modifiers = Modifiers::default();
+            state.capslock = Capslock::default();
+        }
+
+        if capabilities.contains(wl_seat::Capability::Pointer) {
+            if state.wl_pointer.is_none() {
                 let pointer = seat.get_pointer(qh, ());
                 state.cursor_shape_device = state
                     .globals
                     .cursor_shape_manager
                     .as_ref()
                     .map(|cursor_shape_manager| cursor_shape_manager.get_pointer(&pointer, qh, ()));
-
-                if let Some(wl_pointer) = &state.wl_pointer {
-                    wl_pointer.release();
-                }
-
                 state.wl_pointer = Some(pointer);
             }
+        } else {
+            if let Some(pointer) = state.wl_pointer.take() {
+                pointer.release();
+            }
+            if let Some(cursor_shape_device) = state.cursor_shape_device.take() {
+                cursor_shape_device.destroy();
+            }
+            let position = state.mouse_location.unwrap_or_default();
+            let pressed_button = state.button_pressed.take();
+            let modifiers = state.modifiers;
+            pointer_to_unhover = state.mouse_focused_window.take().map(|window| {
+                (
+                    window,
+                    MouseExitEvent {
+                        position,
+                        pressed_button,
+                        modifiers,
+                    },
+                )
+            });
+            state.mouse_location = None;
+            state.continuous_scroll_delta = None;
+            state.discrete_scroll_delta = None;
+            state.scroll_event_received = false;
+            state.click.last_mouse_button = None;
+            state.click.last_location = Point::default();
+            state.click.current_count = 0;
+            state.click.last_click = Instant::now();
+            state.enter_token = None;
+        }
+
+        drop(state);
+        if let Some(window) = keyboard_to_unfocus {
+            window.handle_ime(ImeInput::DeleteText);
+            window.set_focused(false);
+        }
+        if let Some((window, event)) = pointer_to_unhover {
+            window.handle_input(PlatformInput::MouseExited(event));
+            window.set_hovered(false);
         }
     }
 }
