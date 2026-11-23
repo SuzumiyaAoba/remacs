@@ -1318,6 +1318,105 @@ to be assigned to `hs-adjust-block-beginning-function' for C-like modes."
   "Unconditionally turn off `hs-minor-mode'."
   (hs-minor-mode -1))
 
+(defvar-local hs--ediff-hidden-overlays nil)
+
+(defun hs--save-hidden-overlays-for-diff ()
+  "Save and remove hidden Hideshow overlays in the current buffer."
+  (when hs-minor-mode
+    (let (state)
+      (save-restriction
+        (widen)
+        (dolist (overlay (overlays-in (point-min) (point-max)))
+          (when-let* ((kind (overlay-get overlay 'hs)))
+            (push (list (copy-marker (overlay-start overlay))
+                        (copy-marker (overlay-end overlay) t)
+                        kind)
+                  state)
+            (delete-overlay overlay)))
+        (when state
+          (setq state (nreverse state))
+          (remove-overlays (point-min) (point-max) 'hs-indicator t)
+          state)))))
+
+(defun hs--restore-hidden-overlays-after-diff (buffer state)
+  "Restore Hideshow STATE in BUFFER after a diff operation."
+  (unwind-protect
+      (when (and state (buffer-live-p buffer))
+        (with-current-buffer buffer
+          (when hs-minor-mode
+            (save-restriction
+              (widen)
+              (dolist (entry state)
+                (let ((beg (marker-position (nth 0 entry)))
+                      (end (marker-position (nth 1 entry))))
+                  (when (and beg end
+                             (<= (point-min) beg end (point-max)))
+                    (hs-make-overlay beg end (nth 2 entry)))))
+              (when hs-show-indicators
+                (hs--refresh-indicators (point-min) (point-max))))))
+    (dolist (entry state)
+      (set-marker (nth 0 entry) nil)
+      (set-marker (nth 1 entry) nil)))))
+
+(defun hs--ediff-prepare-buffer ()
+  "Temporarily show Hideshow blocks before Ediff manipulates this buffer."
+  (unless hs--ediff-hidden-overlays
+    (setq hs--ediff-hidden-overlays (hs--save-hidden-overlays-for-diff))))
+
+(defun hs--ediff-restore-buffers ()
+  "Restore Hideshow blocks in the buffers used by the current Ediff session."
+  (dolist (variable '(ediff-buffer-A ediff-buffer-B ediff-buffer-C
+                      ediff-ancestor-buffer))
+    (when (boundp variable)
+      (let ((buffer (symbol-value variable)))
+        (when (buffer-live-p buffer)
+          (with-current-buffer buffer
+            (when hs--ediff-hidden-overlays
+              (let ((state (prog1 hs--ediff-hidden-overlays
+                             (setq hs--ediff-hidden-overlays nil))))
+                (hs--restore-hidden-overlays-after-diff buffer state)))))))))
+
+(defun hs--restore-vc-diff-after-finish (diff-buffer source-buffer state)
+  "Restore SOURCE-BUFFER's Hideshow STATE when DIFF-BUFFER finishes."
+  (let (restore-hook)
+    (setq restore-hook
+          (lambda ()
+            (remove-hook 'vc-diff-finish-functions restore-hook t)
+            (remove-hook 'kill-buffer-hook restore-hook t)
+            (hs--restore-hidden-overlays-after-diff source-buffer state)))
+    (with-current-buffer diff-buffer
+      (add-hook 'vc-diff-finish-functions restore-hook nil t)
+      (add-hook 'kill-buffer-hook restore-hook nil t))))
+
+(defun hs--vc-diff-preserve-hidden-overlays (function &rest arguments)
+  "Preserve Hideshow overlays in the caller while FUNCTION runs."
+  (let* ((source-buffer (current-buffer))
+         (state (hs--save-hidden-overlays-for-diff)))
+    (if (not state)
+        (apply function arguments)
+      (let (restore-scheduled)
+        (unwind-protect
+            (let ((result (apply function arguments))
+                  (diff-buffer (current-buffer)))
+              (if (and (buffer-live-p diff-buffer)
+                       (process-live-p (get-buffer-process diff-buffer)))
+                  (progn
+                    (hs--restore-vc-diff-after-finish
+                     diff-buffer source-buffer state)
+                    (setq restore-scheduled t))
+                (hs--restore-hidden-overlays-after-diff source-buffer state)
+                (setq restore-scheduled t))
+              result)
+          (unless restore-scheduled
+            (hs--restore-hidden-overlays-after-diff source-buffer state)))))))
+
+(with-eval-after-load 'ediff-init
+  (add-hook 'ediff-prepare-buffer-hook #'hs--ediff-prepare-buffer)
+  (add-hook 'ediff-cleanup-hook #'hs--ediff-restore-buffers))
+
+(with-eval-after-load 'vc
+  (advice-add 'vc-diff-internal :around #'hs--vc-diff-preserve-hidden-overlays))
+
 
 ;;;; Commands
 
