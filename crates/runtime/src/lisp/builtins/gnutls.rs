@@ -1310,7 +1310,7 @@ fn f_available_p(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
     };
     let mut caps = Value::Nil;
     let push = |caps: &mut Value, i: &mut Interp, name: &str| {
-        *caps = Value::cons(Value::Sym(intern(i, name)), caps.clone());
+        *caps = Value::cons(Value::Sym(i.q(name)), caps.clone());
     };
     push(&mut caps, i, "gnutls");
     push(&mut caps, i, "gnutls3");
@@ -1326,7 +1326,7 @@ fn f_available_p(i: &mut Interp, _a: crate::lisp::Argv) -> EvalResult {
             if name.is_empty() {
                 continue;
             }
-            let sym = intern(i, &name);
+            let sym = i.q(&name);
             // Fmemq check — GNU dedups.
             let mut dup = false;
             let mut cur = caps.clone();
