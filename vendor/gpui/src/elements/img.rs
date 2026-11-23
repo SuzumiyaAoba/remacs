@@ -37,6 +37,27 @@ pub const LOADING_DELAY: Duration = Duration::from_millis(200);
 /// Custom loaders, or external images will not use this asset loader
 pub type ImgResourceLoader = AssetLogger<ImageAssetLoader>;
 
+type ImageLoadedCallback = Arc<dyn Fn(&Arc<RenderImage>) + Send + Sync>;
+
+type ImageLoadResult = std::result::Result<Arc<RenderImage>, ImageCacheError>;
+
+fn use_image_asset<A: Asset<Output = ImageLoadResult>>(
+    window: &mut Window,
+    source: &A::Source,
+    cx: &mut App,
+    on_loaded: Option<ImageLoadedCallback>,
+) -> Option<ImageLoadResult> {
+    if let Some(on_loaded) = on_loaded {
+        window.use_asset_with_callback::<A>(source, cx, move |result| {
+            if let Ok(image) = result {
+                on_loaded(image);
+            }
+        })
+    } else {
+        window.use_asset::<A>(source, cx)
+    }
+}
+
 /// A source of image content.
 #[derive(Clone)]
 pub enum ImageSource {
@@ -254,7 +275,7 @@ pub struct Img {
     source: ImageSource,
     style: ImageStyle,
     image_cache: Option<AnyImageCache>,
-    on_render_image_loaded: Option<Box<dyn Fn(&Arc<RenderImage>) + 'static>>,
+    on_render_image_loaded: Option<ImageLoadedCallback>,
     /// Fixed frame for multi-frame images; `None` preserves animation.
     frame_index: Option<usize>,
     disabled_conversion: bool,
@@ -351,12 +372,13 @@ impl Img {
         }
     }
 
-    /// Observe the decoded image data when it is available to this element.
+    /// Observe decoded image data when it is available to this element or its
+    /// asynchronous asset load completes after the element has been removed.
     pub fn on_render_image_loaded(
         mut self,
-        callback: impl Fn(&Arc<RenderImage>) + 'static,
+        callback: impl Fn(&Arc<RenderImage>) + Send + Sync + 'static,
     ) -> Self {
-        self.on_render_image_loaded = Some(Box::new(callback));
+        self.on_render_image_loaded = Some(Arc::new(callback));
         self
     }
 
@@ -510,6 +532,7 @@ impl Element for Img {
                             max_image_size,
                             window,
                             cx,
+                            self.on_render_image_loaded.clone(),
                         ),
                     };
                     match loaded_data {
@@ -688,6 +711,7 @@ impl Element for Img {
                             layout_state.max_image_size,
                             window,
                             cx,
+                            self.on_render_image_loaded.clone(),
                         )
                         .map(|result| {
                             result.map(|data| {
@@ -885,13 +909,14 @@ impl ImageSource {
         cache: Option<AnyImageCache>,
         window: &mut Window,
         cx: &mut App,
+        on_loaded: Option<ImageLoadedCallback>,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
             ImageSource::Resource(resource) => {
                 if let Some(cache) = cache {
                     cache.load(resource, window, cx)
                 } else {
-                    window.use_asset::<ImgResourceLoader>(resource, cx)
+                    use_image_asset::<ImgResourceLoader>(window, resource, cx, on_loaded)
                 }
             }
             ImageSource::ResourceWithSvgOptions {
@@ -900,14 +925,26 @@ impl ImageSource {
                 css,
             } => {
                 let source = (resource.clone(), base_uri.clone(), css.clone());
-                window.use_asset::<AssetLogger<ImageAssetLoaderWithSvgOptions>>(&source, cx)
+                use_image_asset::<AssetLogger<ImageAssetLoaderWithSvgOptions>>(
+                    window,
+                    &source,
+                    cx,
+                    on_loaded,
+                )
             }
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
-            ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
+            ImageSource::Image(data) => {
+                use_image_asset::<AssetLogger<ImageDecoder>>(window, data, cx, on_loaded)
+            }
             ImageSource::ImageWithBaseUri { image, base_uri } => {
                 let source = (image.clone(), Some(base_uri.clone()), None);
-                window.use_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(&source, cx)
+                use_image_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(
+                    window,
+                    &source,
+                    cx,
+                    on_loaded,
+                )
             }
             ImageSource::ImageWithSvgOptions {
                 image,
@@ -915,7 +952,12 @@ impl ImageSource {
                 css,
             } => {
                 let source = (image.clone(), base_uri.clone(), css.clone());
-                window.use_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(&source, cx)
+                use_image_asset::<AssetLogger<ImageDecoderWithSvgOptions>>(
+                    window,
+                    &source,
+                    cx,
+                    on_loaded,
+                )
             }
         }
     }
@@ -926,9 +968,10 @@ impl ImageSource {
         limit: Option<(u64, u64)>,
         window: &mut Window,
         cx: &mut App,
+        on_loaded: Option<ImageLoadedCallback>,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         let Some(limit) = limit else {
-            return self.use_data(cache, window, cx);
+            return self.use_data(cache, window, cx, on_loaded);
         };
 
         if let Some(source) = self.image_dimensions_source() {
@@ -943,11 +986,11 @@ impl ImageSource {
                         max_height: limit.1,
                     }))
                 }
-                Some(Ok(_)) => self.use_data(cache, window, cx),
+                Some(Ok(_)) => self.use_data(cache, window, cx, on_loaded),
             };
         }
 
-        self.use_data(cache, window, cx).map(|result| {
+        self.use_data(cache, window, cx, on_loaded).map(|result| {
             result.and_then(|image| {
                 if image.frame_count() == 0 {
                     return Ok(image);

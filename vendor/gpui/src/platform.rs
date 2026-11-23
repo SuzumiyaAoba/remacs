@@ -2147,7 +2147,7 @@ impl Image {
         cx: &mut App,
     ) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self)
-            .use_data(None, window, cx)
+            .use_data(None, window, cx, None)
             .and_then(|result| result.ok())
     }
 

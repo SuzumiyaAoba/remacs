@@ -2691,6 +2691,33 @@ impl Window {
         })
     }
 
+    pub(crate) fn use_asset_with_callback<A: Asset>(
+        &mut self,
+        source: &A::Source,
+        cx: &mut App,
+        callback: impl FnOnce(&A::Output) + Send + 'static,
+    ) -> Option<A::Output> {
+        let (task, is_first) = cx.fetch_asset::<A>(source);
+        task.clone().now_or_never().or_else(|| {
+            if is_first {
+                let entity_id = self.current_view();
+                self.spawn(cx, {
+                    let task = task.clone();
+                    async move |cx| {
+                        let output = task.await;
+                        callback(&output);
+                        cx.on_next_frame(move |_, cx| {
+                            cx.notify(entity_id);
+                        });
+                    }
+                })
+                .detach();
+            }
+
+            None
+        })
+    }
+
     /// Asynchronously load an asset, if the asset hasn't finished loading or doesn't exist this will return None.
     /// Your view will not be re-drawn once the asset has finished loading.
     ///

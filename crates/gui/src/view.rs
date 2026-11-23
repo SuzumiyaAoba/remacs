@@ -5491,7 +5491,16 @@ fn grid_image_element(
             source
         }
     };
+    let image_cache_epochs_for_callback = image_cache_epochs.clone();
     let source = source.on_render_image_loaded(move |data| {
+        let current_epoch = image_cache_epochs_for_callback
+            .lock()
+            .ok()
+            .and_then(|epochs| epochs.get(&cache_key).copied())
+            .unwrap_or(0);
+        if current_epoch != cache_epoch {
+            return;
+        }
         let image_bytes = (0..data.frame_count()).fold(0usize, |total, frame| {
             total.saturating_add(data.as_bytes(frame).map_or(0, <[u8]>::len))
         });
