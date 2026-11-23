@@ -1792,16 +1792,14 @@ as argument.")
 (defun eglot--cmd (contact)
   "Helper for `eglot--connect'."
   (if (file-remote-p default-directory)
-      ;; TODO: this seems like a bug, although it’s everywhere. For
-      ;; some reason, for remote connections only, over a pipe, we
-      ;; need to turn off line buffering on the tty.
-      ;;
-      ;; Not only does this seem like there should be a better way,
-      ;; but it almost certainly doesn’t work on non-unix systems.
-      (list shell-file-name "-c"
-            (string-join (cons "stty raw > /dev/null;"
-                               (mapcar #'shell-quote-argument contact))
-                         " "))
+      (let* ((switch (or shell-command-switch "-c"))
+             (command (mapcar #'shell-quote-argument contact)))
+        ;; The remote pipe workaround uses POSIX shell syntax.  Respect
+        ;; connection-local switches such as PowerShell's `-Command' and
+        ;; omit `stty' when the selected shell does not use `-c'.
+        (when (equal switch "-c")
+          (push "stty raw > /dev/null;" command))
+        (list shell-file-name switch (string-join command " ")))
     contact))
 
 (defvar-local eglot--cached-server nil
