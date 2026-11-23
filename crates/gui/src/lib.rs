@@ -965,11 +965,13 @@ pub fn run_gui_with_dump(
                                             requested_icon_type.as_ref(),
                                         ));
                                     }
-                                    window.set_opacity(frame_opacity(
+                                    if let Some(opacity) = frame_opacity(
                                         alpha_active,
                                         alpha_inactive,
                                         window.is_window_active(),
-                                    ));
+                                    ) {
+                                        window.set_opacity(opacity);
+                                    }
                                     if update_background {
                                         window.set_background_appearance(background_appearance);
                                     }
@@ -1118,11 +1120,13 @@ pub fn run_gui_with_dump(
                                         minimum_cells.1,
                                     );
                                     view.set_alpha_background(initial_alpha_background);
-                                    window.set_opacity(frame_opacity(
+                                    if let Some(opacity) = frame_opacity(
                                         initial_alpha_active,
                                         initial_alpha_inactive,
                                         window.is_window_active(),
-                                    ));
+                                    ) {
+                                        window.set_opacity(opacity);
+                                    }
                                     window.set_background_appearance(
                                         initial_background_appearance,
                                     );
@@ -1211,11 +1215,13 @@ pub fn run_gui_with_dump(
                                 update_native_skip_taskbar(window, skip_taskbar);
                                 update_native_sticky(window, sticky);
                                 update_native_shaded(window, shaded);
-                                window.set_opacity(frame_opacity(
+                                if let Some(opacity) = frame_opacity(
                                     alpha_active,
                                     alpha_inactive,
                                     window.is_window_active(),
-                                ));
+                                ) {
+                                    window.set_opacity(opacity);
+                                }
                                 window.set_background_appearance(background_appearance);
                                 window.set_titlebar_appearance(
                                     titlebar_appearance.0,
@@ -2378,15 +2384,23 @@ fn frame_window_options(
 }
 
 fn frame_background_appearance(frame: &FrameSnapshot) -> WindowBackgroundAppearance {
-    if frame.alpha_background < 100 || frame.alpha_active < 100 || frame.alpha_inactive < 100 {
+    if frame.alpha_background < 100
+        || frame.alpha_active.is_some_and(|alpha| alpha < 100)
+        || frame.alpha_inactive.is_some_and(|alpha| alpha < 100)
+    {
         WindowBackgroundAppearance::Transparent
     } else {
         WindowBackgroundAppearance::Opaque
     }
 }
 
-fn frame_opacity(alpha_active: u8, alpha_inactive: u8, active: bool) -> f32 {
-    f32::from(if active { alpha_active } else { alpha_inactive }) / 100.0
+fn frame_opacity(
+    alpha_active: Option<u8>,
+    alpha_inactive: Option<u8>,
+    active: bool,
+) -> Option<f32> {
+    (if active { alpha_active } else { alpha_inactive })
+        .map(|alpha| f32::from(alpha) / 100.0)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

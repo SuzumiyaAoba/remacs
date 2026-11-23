@@ -582,8 +582,8 @@ pub(super) struct FrameSnapshot {
     pub parent_frame: Option<usize>,
     pub visibility: FrameVisibility,
     pub modifier_mapping: super::keys::ModifierMapping,
-    pub alpha_active: u8,
-    pub alpha_inactive: u8,
+    pub alpha_active: Option<u8>,
+    pub alpha_inactive: Option<u8>,
     pub alpha_background: u8,
     pub width: usize,
     pub height: usize,
@@ -2665,7 +2665,10 @@ fn alpha_percent(value: &Value) -> Option<i128> {
     }
 }
 
-fn frame_alpha(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> (u8, u8) {
+fn frame_alpha(
+    i: &Interp,
+    frame: &remacs_runtime::editor::FrameRef,
+) -> (Option<u8>, Option<u8>) {
     let lower_limit = i
         .intern_soft("frame-alpha-lower-limit")
         .filter(|symbol| i.bound_p(*symbol))
@@ -2688,13 +2691,11 @@ fn frame_alpha(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> (u8, u8)
             (value, value)
         }
     };
-    let normalize = |value: Option<i128>, fallback: u8| {
-        value
-            .map(|value| value.clamp(lower_limit, 100) as u8)
-            .unwrap_or(fallback)
+    let normalize = |value: Option<i128>| {
+        value.map(|value| value.clamp(lower_limit, 100) as u8)
     };
-    let active = normalize(active, 100);
-    let inactive = normalize(inactive, active);
+    let active = normalize(active);
+    let inactive = normalize(inactive);
     (active, inactive)
 }
 
