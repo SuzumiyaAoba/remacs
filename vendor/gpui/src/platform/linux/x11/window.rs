@@ -439,7 +439,21 @@ impl rwh::HasWindowHandle for X11Window {
 }
 impl rwh::HasDisplayHandle for X11Window {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let root = self.0.state.borrow().x_root_window;
+        let screen = self
+            .0
+            .xcb
+            .setup()
+            .roots
+            .iter()
+            .position(|screen| screen.root == root)
+            .ok_or(rwh::HandleError::Unavailable)?;
+        let connection = as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
+            self.0.xcb.as_ref(),
+        ) as *mut c_void;
+        let connection = NonNull::new(connection).ok_or(rwh::HandleError::Unavailable)?;
+        let handle = rwh::XcbDisplayHandle::new(Some(connection), screen as i32);
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
     }
 }
 
