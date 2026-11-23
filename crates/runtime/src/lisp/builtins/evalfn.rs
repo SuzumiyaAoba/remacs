@@ -1652,6 +1652,7 @@ fn macroexpand_all_expanded(
                             body,
                         );
                     }
+                    sym::DEFVAR | sym::DEFCONST => return Ok(expanded),
                     sym::DEFUN | sym::DEFMACRO if items.len() >= 3 => {
                         // GNU `macroexp--defun' consumes leading
                         // `(declare ...)' specs itself; they are data,
