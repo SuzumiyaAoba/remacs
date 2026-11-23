@@ -992,7 +992,7 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
     // GNU eval.c: (defvar NAME [INIT [DOCSTRING]]) — a 4th argument
     // signals `(error "Too many arguments")'.
     let name_v = car(i, &args)?;
-    let sid = match i.sym_id(&name_v) {
+    let name_id = match i.sym_id(&name_v) {
         Some(s) => s,
         None => return Err(i.wrong_type_mut("symbolp", &name_v)),
     };
@@ -1000,7 +1000,7 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
         return Err(i.error("Too many arguments".to_string()));
     }
     // GNU's defvar operates through `indirect-variable'.
-    let sid = i.var_alias_target(sid);
+    let sid = i.var_alias_target(name_id);
     let init = cadr(i, &args)?;
     let has_init = !cdr(i, &args)?.is_nil();
     // GNU reads the optional docstring before evaluating INIT; the initializer
@@ -1035,7 +1035,7 @@ fn sf_defvar(i: &mut Interp, args: Value) -> EvalResult {
     if !doc.is_nil() {
         // GNU: Fput(symbol, Qvariable_documentation, doc).
         let vd = i.q("variable-documentation");
-        i.put_prop(sid, vd, doc);
+        i.put_prop(name_id, vd, doc);
     }
     // GNU eval.c `defvar' LOADHIST_ATTACHes the bare symbol — this is
     // what records `(defvar SYM)' inside compiled `byte-code' forms,
