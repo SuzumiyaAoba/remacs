@@ -4695,6 +4695,19 @@ impl Render for EditorView {
                                     + grid_row_top_for_cell(&grid, row, column, line_height)
                                     - px(vscroll_pixels_for_cell(&grid, row, column) as f32),
                             );
+                            let cursor_window_clip = (cursor.shape
+                                == remacs_runtime::frontend::GridCursorShape::Bar)
+                                .then(|| {
+                                    grid_cell_window_clip(
+                                        &grid,
+                                        row,
+                                        column,
+                                        bounds,
+                                        cell_width,
+                                        line_height,
+                                    )
+                                })
+                                .flatten();
                             with_vscroll_cell_clip(
                                 &grid,
                                 row,
@@ -4761,7 +4774,7 @@ impl Render for EditorView {
                                         ));
                                     }
                                     remacs_runtime::frontend::GridCursorShape::Bar => {
-                                        window.paint_quad(fill(
+                                        if let Some(rect) = clip_rect_to_window(
                                             Bounds {
                                                 origin,
                                                 size: size(
@@ -4769,8 +4782,10 @@ impl Render for EditorView {
                                                     line_height,
                                                 ),
                                             },
-                                            rgb(rgb_color),
-                                        ));
+                                            cursor_window_clip.as_ref(),
+                                        ) {
+                                            window.paint_quad(fill(rect, rgb(rgb_color)));
+                                        }
                                     }
                                     remacs_runtime::frontend::GridCursorShape::HBar => {
                                         let height = px(cursor.thickness.max(1) as f32);
@@ -6980,6 +6995,79 @@ fn grid_run_window_clip(
     let bottom = grid_window_row_top(
         grid,
         window_id,
+        area.top.saturating_add(area.rows),
+        line_height,
+    );
+    (bottom > top).then_some(Bounds {
+        origin: point(bounds.left() + left, bounds.top() + top),
+        size: size(right - left, bottom - top),
+    })
+}
+
+fn grid_cell_window_clip(
+    grid: &Grid,
+    row: usize,
+    column: usize,
+    bounds: Bounds<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+) -> Option<Bounds<Pixels>> {
+    let segment = grid
+        .pixelwise_segments
+        .iter()
+        .find(|segment| {
+            segment.row == row
+                && column >= segment.left_column
+                && column < segment.right_column
+        });
+    let area = if let Some(segment) = segment {
+        grid.window_text_areas.iter().find(|area| {
+            row >= area.top
+                && row < area.top.saturating_add(area.rows)
+                && area.left.saturating_sub(area.left_fringe) <= segment.left_column
+                && area
+                    .left
+                    .saturating_add(area.width)
+                    .saturating_add(area.right_fringe)
+                    >= segment.right_column
+        })
+    } else {
+        grid.window_text_areas.iter().find(|area| {
+            let full_left = area.left.saturating_sub(area.left_fringe);
+            let full_right = area
+                .left
+                .saturating_add(area.width)
+                .saturating_add(area.right_fringe);
+            row >= area.top
+                && row < area.top.saturating_add(area.rows)
+                && column >= full_left
+                && column < full_right
+        })
+    }?;
+    let (left, right) = if let Some(segment) = segment {
+        let left = cell_width * segment.left_column as f32 + px(segment.x_offset as f32);
+        let width = (cell_width * (segment.right_column - segment.left_column) as f32
+            + px(segment.width_adjustment as f32))
+            .max(px(0.0));
+        (left, left + width)
+    } else {
+        let left_column = area.left.saturating_sub(area.left_fringe);
+        let right_column = area
+            .left
+            .saturating_add(area.width)
+            .saturating_add(area.right_fringe);
+        (
+            cell_width * left_column as f32,
+            cell_width * right_column as f32,
+        )
+    };
+    if right <= left {
+        return None;
+    }
+    let top = grid_window_row_top(grid, area.window_id, area.top, line_height);
+    let bottom = grid_window_row_top(
+        grid,
+        area.window_id,
         area.top.saturating_add(area.rows),
         line_height,
     );
