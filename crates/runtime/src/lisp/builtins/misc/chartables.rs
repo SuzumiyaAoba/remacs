@@ -1657,7 +1657,6 @@ pub(super) fn f_map_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     // (word-list tables) leaves the raw value untouched.
     let decode = matches!(&a[1], Value::Record(r) if matches!(r.borrow().get(4), Some(Value::Int(0))))
         && is_uniprop_table(i, &a[1]);
-    let runs = ct_effective_runs(i, &a[1], true);
     // GNU's `map_char_table' only calls the function for ranges whose
     // effective value is non-nil — unset regions (and nil stores,
     // which revert to the default) are skipped entirely.  GNU passes
@@ -1666,9 +1665,24 @@ pub(super) fn f_map_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
     // showing the final mutation; mirror that.
     let range = Value::cons(Value::Int(0), Value::Int(0));
     let mut last: Option<(u32, u32)> = None;
-    for (from, to, _) in runs {
+    let mut next_code = 0u32;
+    loop {
+        // Recompute the remaining partition after every callback.  Lisp
+        // callbacks can change later values and merge or split their ranges.
+        let runs = ct_effective_runs(i, &a[1], true);
+        let Some((run_from, to, _)) = runs
+            .into_iter()
+            .find(|(_, run_to, _)| *run_to >= next_code)
+        else {
+            break;
+        };
+        let from = run_from.max(next_code);
         let val = ct_map_current_value(i, &a[1], from as usize);
         if val.is_nil() {
+            if to == CT_MAX_CHAR {
+                break;
+            }
+            next_code = to + 1;
             continue;
         }
         last = Some((from, to));
@@ -1691,6 +1705,10 @@ pub(super) fn f_map_char_table(i: &mut Interp, a: crate::lisp::Argv) -> EvalResu
             val
         };
         i.apply(&a[0], vec![key, val])?;
+        if to == CT_MAX_CHAR {
+            break;
+        }
+        next_code = to + 1;
     }
     // GNU leaves its shared RANGE cons at `(FROM . TO)' where FROM is
     // the block start after the last emitted run (i.e. last-to + 1,
