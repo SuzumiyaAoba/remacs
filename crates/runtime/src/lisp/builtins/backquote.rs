@@ -87,8 +87,9 @@ fn list_length(i: &mut Interp, v: &Value) -> Result<usize, Flow> {
     }
 }
 
-fn is_tag(v: &Value, n: i128) -> bool {
-    matches!(v, Value::Int(t) if *t == n)
+fn bq_tag_eq(i: &mut Interp, tag: &Value, n: i128) -> Result<bool, Flow> {
+    let equal = Value::Sym(i.q("="));
+    Ok(i.apply(&equal, vec![tag.clone(), Value::Int(n)])?.truthy())
 }
 
 /// `backquote-process' defaults only nil/omitted LEVEL to zero.  Other
@@ -212,7 +213,8 @@ fn bq_process_inner(
                     .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote vector"))?
                     .clone();
                 let n = bq_process_inner(i, &Value::list(elems), level, syms, active)?;
-                if is_tag(&car(i, &n)?, 0) {
+                let tag = car(i, &n)?;
+                if bq_tag_eq(i, &tag, 0)? {
                     return Ok(Value::cons(Value::Int(0), s.clone()));
                 }
                 let list_id = i.q("list");
@@ -308,7 +310,8 @@ fn bq_process_inner(
                     }
                     first_cell = false;
                     let item = bq_process_inner(i, &rcar, level, syms, active)?;
-                    if is_tag(&car(i, &item)?, 2) {
+                    let item_tag = car(i, &item)?;
+                    if bq_tag_eq(i, &item_tag, 2)? {
                         if lists.is_empty() {
                             firstlist = std::mem::take(&mut list);
                         }
@@ -430,7 +433,8 @@ fn bq_listify(
     let mut heads: Vec<Value> = Vec::new(); // newest first (GNU conses)
     let mut tail = cdr(i, old_tail)?;
     let mut old_tail_live = old_tail.clone();
-    if is_tag(&car(i, old_tail)?, 0) {
+    let old_tail_tag = car(i, old_tail)?;
+    if bq_tag_eq(i, &old_tail_tag, 0)? {
         tail = i.eval(&tail)?;
         old_tail_live = Value::Nil;
     }
@@ -438,7 +442,9 @@ fn bq_listify(
     while consp(&list_tail) {
         let item = car(i, &list_tail)?;
         list_tail = cdr(i, &list_tail)?;
-        if !heads.is_empty() || !old_tail_live.is_nil() || !is_tag(&car(i, &item)?, 0) {
+        let item_tag = car(i, &item)?;
+        let item_is_constant = bq_tag_eq(i, &item_tag, 0)?;
+        if !heads.is_empty() || !old_tail_live.is_nil() || !item_is_constant {
             heads.insert(0, cdr(i, &item)?);
         } else {
             if std::env::var_os("REMACS_BQ_DBG").is_some() {
