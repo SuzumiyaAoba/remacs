@@ -533,11 +533,35 @@ fn bq_check_list_car(i: &mut Interp, list: &Value) -> Result<(), Flow> {
                 if !matches!(car_v, Value::Cons(_)) {
                     return Err(i.wrong_type_mut("listp", &car_v));
                 }
+                let form = cdr(i, &car_v)?;
+                bq_check_form_spine(i, &form, &car_v)?;
                 cur = cdr_v;
             }
             other => return Err(i.wrong_type_mut("listp", other)),
         }
     }
+}
+
+/// CHECK_LIST_CAR entries permit a dotted FORM, but that form's cdr spine
+/// must still be finite. Signal with the entry itself, as GNU does, so this
+/// error precedes validation of OLD-TAIL.
+fn bq_check_form_spine(i: &mut Interp, form: &Value, entry: &Value) -> Result<(), Flow> {
+    let mut cur = form.clone();
+    let mut seen = FxHashSet::default();
+    loop {
+        let Value::Cons(cell) = cur.clone() else {
+            break;
+        };
+        if !seen.insert(Rc::as_ptr(&cell) as usize) {
+            return Err(crate::lisp::builtins::listfn::err_circular(i, entry));
+        }
+        cur = cell
+            .try_borrow()
+            .map_err(|_| i.error("Cannot inspect a mutably borrowed backquote form"))?
+            .cdr
+            .clone();
+    }
+    Ok(())
 }
 
 /// GNU CHECK_NUMBER_OR_MARKER.
