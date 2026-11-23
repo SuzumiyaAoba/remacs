@@ -47,7 +47,7 @@ fn use_image_asset<A: Asset<Output = ImageLoadResult>>(
     cx: &mut App,
     on_loaded: Option<ImageLoadedCallback>,
 ) -> Option<ImageLoadResult> {
-    if let Some(on_loaded) = on_loaded {
+    let result = if let Some(on_loaded) = on_loaded {
         window.use_asset_with_callback::<A>(source, cx, move |result| {
             if let Ok(image) = result {
                 on_loaded(image);
@@ -55,7 +55,13 @@ fn use_image_asset<A: Asset<Output = ImageLoadResult>>(
         })
     } else {
         window.use_asset::<A>(source, cx)
+    };
+    if matches!(&result, Some(Err(_))) {
+        // Keep a failed read/decode from becoming a permanent cached result.
+        // The current element can still show its fallback; a later redraw will retry.
+        cx.remove_asset::<A>(source);
     }
+    result
 }
 
 /// A source of image content.
