@@ -1711,17 +1711,14 @@ fn macroexpand_all_expanded(
                         // verbatim, extra elements included.
                         if let Value::Cons(lc) = &items[1] {
                             let (head, _) = crate::lisp::eval::cons_parts(i, lc)?;
-                            let is_lam =
-                                i.sym_is(&head, sym::LAMBDA) || i.sym_is(&head, closure_id);
-                            if is_lam {
+                            if i.sym_is(&head, sym::LAMBDA) {
                                 // Expand the lambda's elements the way
                                 // `macroexp--all-forms' does (arglist is
                                 // data, body elements are code); do NOT
                                 // recur through `macroexpand_all' on the
                                 // whole `(lambda ...)' — `macroexpand-1'
                                 // would just re-wrap it in `function'.
-                                let is_clo = i.sym_is(&head, closure_id);
-                                let head = if is_clo { 3 } else { 2 };
+                                let head = 2;
                                 let Some(litems) = macroexpand_list_to_vec(i, &items[1])? else {
                                     return Ok(expanded);
                                 };
@@ -1731,7 +1728,7 @@ fn macroexpand_all_expanded(
                                 let bound = binder_syms(i, &litems[head - 1])?;
                                 let body = macroexpand_list_tail(i, &items[1], head)?;
                                 let body = macroexpand_live_filtered_body(
-                                    i, &body, env_id, &env, sm, &bound, is_clo,
+                                    i, &body, env_id, &env, sm, &bound, false,
                                 )?;
                                 let lambda = macroexpand_prepend_preserving(
                                     i,
