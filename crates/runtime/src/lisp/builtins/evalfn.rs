@@ -1362,6 +1362,37 @@ fn macroexpand_all_cond(
     Ok(result)
 }
 
+/// Expand a direct call whose function position is a lambda. GNU walks the
+/// lambda body and call arguments independently, preserving dotted tails in
+/// either spine.
+fn macroexpand_direct_lambda_call(
+    i: &mut Interp,
+    original: &Value,
+    lambda: &Value,
+) -> Result<Option<Value>, Flow> {
+    let Value::Cons(cell) = lambda else {
+        return Ok(None);
+    };
+    let (head, rest) = crate::lisp::eval::cons_parts(i, cell)?;
+    if !i.sym_is(&head, sym::LAMBDA) {
+        return Ok(None);
+    }
+    let Value::Cons(arg_cell) = rest else {
+        return Ok(None);
+    };
+    let (arglist, body) = crate::lisp::eval::cons_parts(i, &arg_cell)?;
+    let arguments = macroexpand_list_tail(i, original, 1)?;
+    let body = macroexpand_live_spine(i, &body, macroexpand_all_recur)?;
+    let lambda = macroexpand_prepend_preserving(i, lambda, vec![head, arglist], body)?;
+    let arguments = macroexpand_live_spine(i, &arguments, macroexpand_all_recur)?;
+    Ok(Some(macroexpand_prepend_preserving(
+        i,
+        original,
+        vec![lambda],
+        arguments,
+    )?))
+}
+
 /// Look up SYM_ID in ENV's `(:cl-symbol-macros . BINDINGS)' entry.
 /// BINDINGS are `(SYM EXP)' pairs (GNU `cl-symbol-macrolet'), where
 /// `cl--sm-macroexpand-1' alpha-renaming also pushes `(VAR . NVAR)'
@@ -1685,29 +1716,11 @@ fn macroexpand_all_expanded(
             // is only discarded here, which also pollutes the
             // REMACS_BT_ERR log.)
             let Some(items) = macroexpand_list_to_vec(i, &expanded)? else {
-                if let Value::Cons(function_cell) = &car {
-                    let is_lambda = i.sym_is(
-                        &crate::lisp::eval::cons_parts(i, function_cell)?.0,
-                        sym::LAMBDA,
-                    );
-                    if is_lambda {
-                        if let Some(lambda_items) = macroexpand_list_to_vec(i, &car)? {
-                            if lambda_items.len() >= 2 {
-                                let mut function = lambda_items[..2].to_vec();
-                                for form in &lambda_items[2..] {
-                                    function.push(macroexpand_all_recur(i, form)?);
-                                }
-                                let function = Value::list(function);
-                                let arguments =
-                                    macroexpand_live_spine(i, &cdr, macroexpand_all_recur)?;
-                                return macroexpand_prepend_preserving(
-                                    i,
-                                    &expanded,
-                                    vec![function],
-                                    arguments,
-                                );
-                            }
-                        }
+                if matches!(&car, Value::Cons(_)) {
+                    if let Some(result) =
+                        macroexpand_direct_lambda_call(i, &expanded, &car)?
+                    {
+                        return Ok(result);
                     }
                 }
                 if i.sym_is(&car, sym::SETQ) {
@@ -2319,24 +2332,11 @@ fn macroexpand_all_expanded(
             // a lambda in function position keeps its `(lambda ARGLIST)'
             // head verbatim (no `function' wrap) while its body and the
             // call arguments expand.
-            if let Value::Cons(lc) = &items[0] {
-                let is_lam =
-                    i.sym_is(&crate::lisp::eval::cons_parts(i, lc)?.0, sym::LAMBDA);
-                if is_lam {
-                    let litems = match want_list(i, &items[0]) {
-                        Ok(v) if v.len() >= 2 => v,
-                        _ => return Ok(expanded),
-                    };
-                    let mut fun_items = litems[..2].to_vec();
-                    for it in &litems[2..] {
-                        fun_items.push(macroexpand_all_recur(i, it)?);
-                    }
-                    let mut res = vec![Value::list(fun_items)];
-                    for it in &items[1..] {
-                        res.push(macroexpand_all_recur(i, it)?);
-                    }
-                    return Ok(Value::list(res));
-                }
+            if let Value::Cons(_) = &items[0]
+                && let Some(result) =
+                    macroexpand_direct_lambda_call(i, &expanded, &items[0])?
+            {
+                return Ok(result);
             }
             if i.sym_id(&items[0]).is_none() {
                 // GNU `macroexp--expand-all' falls through to `(_ form)'
