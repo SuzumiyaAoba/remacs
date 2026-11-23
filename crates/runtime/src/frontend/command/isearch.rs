@@ -541,15 +541,17 @@ fn isearch_input_method_text(
     }
 
     // GNU's isearch-x reads through the active input method in a minibuffer.
-    // Use a temporary buffer here so Quail's composition overlays and region
-    // edits cannot touch the buffer being searched.
-    let method = i.prin1_to_string(&method).to_unicode_lossy();
-    let source = format!(
-        "(with-temp-buffer (activate-input-method {}) \
-           (funcall input-method-function {}))",
-        method, key
-    );
-    let result = i.eval_str(&source)?;
+    // Use a temporary buffer so Quail's composition overlays and region edits
+    // cannot touch the buffer being searched. Build the form with symbol IDs:
+    // source text would re-intern INPUT-METHOD-FUNCTION after uninterning it.
+    let activate_input_method = Value::Sym(i.q("activate-input-method"));
+    let with_temp_buffer = Value::Sym(i.q("with-temp-buffer"));
+    let funcall = Value::Sym(i.q("funcall"));
+    let input_method_function = Value::Sym(i.q("input-method-function"));
+    let activate = Value::list(vec![activate_input_method, method]);
+    let call = Value::list(vec![funcall, input_method_function, Value::Int(key)]);
+    let form = Value::list(vec![with_temp_buffer, activate, call]);
+    let result = i.eval(&form)?;
     let events = match result {
         Value::Nil => Vec::new(),
         Value::Int(code) => vec![Value::Int(code)],
