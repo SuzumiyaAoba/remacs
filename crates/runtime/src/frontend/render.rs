@@ -12235,11 +12235,20 @@ pub fn render_frame_grid_with_mouse_position_cached_mut(
 }
 
 fn frame_gamma_exponent(i: &Interp, frame: &crate::editor::FrameRef) -> Option<f64> {
-    let parameter = i.q_soft("screen-gamma")?;
-    let value = crate::lisp::eval::plist_get_v(
-        &frame.borrow().params,
-        &Value::Sym(parameter),
-    );
+    let parameters = frame.borrow().params.clone().list_to_vec().unwrap_or_default();
+    let parameter = i.q_soft("screen-gamma");
+    let entry = parameter
+        .and_then(|parameter| {
+            parameters.chunks_exact(2).find(|pair| {
+                matches!(&pair[0], Value::Sym(symbol) if *symbol == parameter)
+            })
+        })
+        .or_else(|| {
+            parameters.chunks_exact(2).find(|pair| {
+                matches!(&pair[0], Value::Sym(symbol) if i.symbol_name(*symbol) == "screen-gamma")
+            })
+        });
+    let value = entry.map(|pair| pair[1].clone()).unwrap_or(Value::Nil);
     let screen_gamma = match value {
         Value::Int(value) if value > 0 => value as f64,
         Value::Float(value) if value.is_finite() && *value > 0.0 => *value,
