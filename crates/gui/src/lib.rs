@@ -244,9 +244,11 @@ static ORIGINAL_WINDOW_EX_STYLES: OnceLock<
 #[cfg(target_os = "windows")]
 #[derive(Clone, Copy)]
 struct NativeWindowExStyleOverrides {
-    original: i32,
+    original_ex_style: i32,
+    original_style: i32,
     skip_taskbar: bool,
     no_accept_focus: bool,
+    undecorated: bool,
 }
 #[cfg(target_os = "linux")]
 static ORIGINAL_X11_WM_HINTS: OnceLock<Mutex<HashMap<u32, Option<Vec<u32>>>>> =
@@ -580,6 +582,7 @@ pub fn run_gui_with_dump(
         })
         .unwrap_or(size(px(960.0), px(640.0)));
     let initial_no_accept_focus = initial_frame_size.is_some_and(|frame| frame.no_accept_focus);
+    let initial_undecorated = initial_frame_size.is_some_and(|frame| frame.undecorated);
     let initial_minimum_cells = initial_frame_size
         .map(|frame| (frame.min_width, frame.min_height))
         .unwrap_or((None, None));
@@ -722,6 +725,7 @@ pub fn run_gui_with_dump(
             },
             |window, cx| {
                 set_native_no_accept_focus(window, initial_no_accept_focus);
+                set_native_undecorated(window, initial_undecorated);
                 update_native_skip_taskbar(window, initial_skip_taskbar);
                 update_native_sticky(window, initial_sticky);
                 update_native_shaded(window, initial_shaded);
@@ -764,6 +768,7 @@ pub fn run_gui_with_dump(
             let mut frame_skip_taskbar = HashMap::<usize, bool>::new();
             let mut frame_sticky = HashMap::<usize, bool>::new();
             let mut frame_shaded = HashMap::<usize, bool>::new();
+            let mut frame_undecorated = HashMap::<usize, bool>::new();
             let mut window_backgrounds = HashMap::<usize, WindowBackgroundAppearance>::new();
             let mut window_titlebars = HashMap::<usize, (bool, bool)>::new();
             let mut window_appearances = HashMap::<usize, Option<WindowAppearance>>::new();
@@ -854,6 +859,10 @@ pub fn run_gui_with_dump(
                             let shaded = snapshot.shaded;
                             let shaded_changed = frame_shaded.get(&frame_id) != Some(&shaded);
                             frame_shaded.insert(frame_id, shaded);
+                            let undecorated = snapshot.undecorated;
+                            let undecorated_changed =
+                                frame_undecorated.get(&frame_id) != Some(&undecorated);
+                            frame_undecorated.insert(frame_id, undecorated);
                             let minimum_cells = (snapshot.min_width, snapshot.min_height);
                             let parent_bounds = snapshot
                                 .parent_frame
@@ -883,6 +892,9 @@ pub fn run_gui_with_dump(
                                 native_window_changed.insert(frame_id);
                                 if let Some(handle) = windows.remove(&frame_id) {
                                     let _ = handle.update(cx, |_view, window, _cx| {
+                                        update_native_skip_taskbar(window, false);
+                                        set_native_no_accept_focus(window, false);
+                                        set_native_undecorated(window, false);
                                         window.remove_window();
                                     });
                                 }
@@ -947,6 +959,9 @@ pub fn run_gui_with_dump(
                                     }
                                     if shaded_changed {
                                         update_native_shaded(window, shaded);
+                                    }
+                                    if undecorated_changed {
+                                        set_native_undecorated(window, undecorated);
                                     }
                                     let minimum_size_changed =
                                         view.set_minimum_cells(minimum_cells.0, minimum_cells.1);
@@ -1147,6 +1162,9 @@ pub fn run_gui_with_dump(
                                     if shaded_changed {
                                         update_native_shaded(window, shaded);
                                     }
+                                    if undecorated_changed {
+                                        set_native_undecorated(window, undecorated);
+                                    }
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
                                     view.set_borders_respect_alpha_background(
@@ -1251,6 +1269,7 @@ pub fn run_gui_with_dump(
                             let image_cache_size = image_cache_size.clone();
                             let handle = match cx.open_window(options, move |window, app| {
                                 set_native_no_accept_focus(window, no_accept_focus);
+                                set_native_undecorated(window, undecorated);
                                 update_native_skip_taskbar(window, skip_taskbar);
                                 update_native_sticky(window, sticky);
                                 update_native_shaded(window, shaded);
@@ -1363,6 +1382,8 @@ pub fn run_gui_with_dump(
                             if let Some(handle) = windows.remove(&frame_id) {
                                 let _ = handle.update(cx, |_view, window, _cx| {
                                     update_native_skip_taskbar(window, false);
+                                    set_native_no_accept_focus(window, false);
+                                    set_native_undecorated(window, false);
                                     update_native_minimum_size(window, None);
                                     window.remove_window();
                                 });
@@ -1377,6 +1398,7 @@ pub fn run_gui_with_dump(
                             frame_skip_taskbar.remove(&frame_id);
                             frame_sticky.remove(&frame_id);
                             frame_shaded.remove(&frame_id);
+                            frame_undecorated.remove(&frame_id);
                             window_backgrounds.remove(&frame_id);
                             window_titlebars.remove(&frame_id);
                             window_appearances.remove(&frame_id);
@@ -3309,7 +3331,7 @@ fn set_native_sticky(window: &Window, sticky: bool) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), String> {
-    update_native_window_ex_style(window, Some(skip_taskbar), None)
+    update_native_window_ex_style(window, Some(skip_taskbar), None, None)
 }
 
 #[cfg(target_os = "windows")]
@@ -3317,13 +3339,20 @@ fn update_native_window_ex_style(
     window: &Window,
     skip_taskbar: Option<bool>,
     no_accept_focus: Option<bool>,
+    undecorated: Option<bool>,
 ) -> Result<(), String> {
     use raw_window_handle::RawWindowHandle;
 
+    const GWL_STYLE: i32 = -16;
     const GWL_EXSTYLE: i32 = -20;
     const WS_EX_TOOLWINDOW: i32 = 0x0000_0080;
     const WS_EX_APPWINDOW: i32 = 0x0004_0000;
     const WS_EX_NOACTIVATE: i32 = 0x0800_0000;
+    const WS_CAPTION: i32 = 0x00C0_0000;
+    const WS_THICKFRAME: i32 = 0x0004_0000;
+    const WS_SYSMENU: i32 = 0x0008_0000;
+    const WS_MINIMIZEBOX: i32 = 0x0002_0000;
+    const WS_MAXIMIZEBOX: i32 = 0x0001_0000;
     const SWP_NOSIZE: u32 = 0x0001;
     const SWP_NOMOVE: u32 = 0x0002;
     const SWP_NOZORDER: u32 = 0x0004;
@@ -3337,8 +3366,9 @@ fn update_native_window_ex_style(
     };
     let hwnd = handle.hwnd.get() as *mut std::ffi::c_void;
     let hwnd_id = handle.hwnd.get();
-    let current = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) };
-    let target = {
+    let current_style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) };
+    let current_ex_style = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) };
+    let (target_style, target_ex_style) = {
         let mut styles = ORIGINAL_WINDOW_EX_STYLES
             .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
@@ -3346,13 +3376,16 @@ fn update_native_window_ex_style(
         if !styles.contains_key(&hwnd_id)
             && !skip_taskbar.unwrap_or(false)
             && !no_accept_focus.unwrap_or(false)
+            && !undecorated.unwrap_or(false)
         {
             return Ok(());
         }
         let state = styles.entry(hwnd_id).or_insert(NativeWindowExStyleOverrides {
-            original: current,
+            original_ex_style: current_ex_style,
+            original_style: current_style,
             skip_taskbar: false,
             no_accept_focus: false,
+            undecorated: false,
         });
         if let Some(skip_taskbar) = skip_taskbar {
             state.skip_taskbar = skip_taskbar;
@@ -3360,21 +3393,29 @@ fn update_native_window_ex_style(
         if let Some(no_accept_focus) = no_accept_focus {
             state.no_accept_focus = no_accept_focus;
         }
-        let mut target = state.original;
+        if let Some(undecorated) = undecorated {
+            state.undecorated = undecorated;
+        }
+        let mut target_ex_style = state.original_ex_style;
+        let mut target_style = state.original_style;
         if state.skip_taskbar {
-            target = (target | WS_EX_TOOLWINDOW) & !WS_EX_APPWINDOW;
+            target_ex_style = (target_ex_style | WS_EX_TOOLWINDOW) & !WS_EX_APPWINDOW;
         }
         if state.no_accept_focus {
-            target |= WS_EX_NOACTIVATE;
+            target_ex_style |= WS_EX_NOACTIVATE;
         }
-        if !state.skip_taskbar && !state.no_accept_focus {
+        if state.undecorated {
+            target_style &= !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+        }
+        if !state.skip_taskbar && !state.no_accept_focus && !state.undecorated {
             styles.remove(&hwnd_id);
         }
-        target
+        (target_style, target_ex_style)
     };
-    if target != current {
+    if target_style != current_style || target_ex_style != current_ex_style {
         unsafe {
-            SetWindowLongW(hwnd, GWL_EXSTYLE, target);
+            SetWindowLongW(hwnd, GWL_STYLE, target_style);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, target_ex_style);
             SetWindowPos(
                 hwnd,
                 std::ptr::null_mut(),
@@ -3391,10 +3432,20 @@ fn update_native_window_ex_style(
 
 #[cfg(target_os = "windows")]
 fn set_native_no_accept_focus(window: &Window, no_accept_focus: bool) {
-    if let Err(error) = update_native_window_ex_style(window, None, Some(no_accept_focus)) {
+    if let Err(error) = update_native_window_ex_style(window, None, Some(no_accept_focus), None) {
         eprintln!("remacs: failed to set no-accept-focus: {error}");
     }
 }
+
+#[cfg(target_os = "windows")]
+fn set_native_undecorated(window: &Window, undecorated: bool) {
+    if let Err(error) = update_native_window_ex_style(window, None, None, Some(undecorated)) {
+        eprintln!("remacs: failed to set undecorated frame: {error}");
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_native_undecorated(_window: &Window, _undecorated: bool) {}
 
 #[cfg(target_os = "linux")]
 struct XcbWindowContext {

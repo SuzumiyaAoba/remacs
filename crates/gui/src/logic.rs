@@ -787,6 +787,7 @@ pub(super) struct InitialFrameSize {
     pub user_position: bool,
     pub user_size: bool,
     pub override_redirect: bool,
+    pub undecorated: bool,
     pub no_accept_focus: bool,
     pub no_focus_on_map: bool,
     pub skip_taskbar: bool,
@@ -4840,6 +4841,7 @@ fn start_logic_inner(
                     user_size: frame_parameter_value(&i, frame, "user-size").truthy(),
                     override_redirect: frame_parameter_value(&i, frame, "override-redirect")
                         .truthy(),
+                    undecorated: frame_parameter_value(&i, frame, "undecorated").truthy(),
                     no_accept_focus: frame_parameter_value(&i, frame, "no-accept-focus").truthy(),
                     no_focus_on_map: frame_parameter_value(&i, frame, "no-focus-on-map").truthy(),
                     skip_taskbar: frame_parameter_value(&i, frame, "skip-taskbar").truthy(),
