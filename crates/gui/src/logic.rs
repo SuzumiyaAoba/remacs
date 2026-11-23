@@ -2656,6 +2656,11 @@ fn frame_system_is_graphical(i: &Interp, frame: &remacs_runtime::editor::FrameRe
 fn alpha_percent(value: &Value) -> Option<i128> {
     match value {
         Value::Int(value) => Some(*value),
+        Value::Float(value)
+            if value.is_finite() && (0.0..=1.0).contains(&**value) =>
+        {
+            Some((**value * 100.0).round() as i128)
+        }
         _ => None,
     }
 }
@@ -2669,7 +2674,6 @@ fn frame_alpha(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> (u8, u8)
         .clamp(0, 100);
     let value = frame_parameter_value(i, frame, "alpha");
     let (active, inactive) = match value {
-        Value::Int(value) => (Some(value), Some(value)),
         Value::Cons(pair) => {
             let pair = pair.borrow();
             let active = alpha_percent(&pair.car);
@@ -2679,7 +2683,10 @@ fn frame_alpha(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> (u8, u8)
             };
             (active, alpha_percent(&inactive_value))
         }
-        _ => (None, None),
+        value => {
+            let value = alpha_percent(&value);
+            (value, value)
+        }
     };
     let normalize = |value: Option<i128>, fallback: u8| {
         value
@@ -2692,10 +2699,9 @@ fn frame_alpha(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> (u8, u8)
 }
 
 fn frame_alpha_background(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> u8 {
-    match frame_parameter_value(i, frame, "alpha-background") {
-        Value::Int(value) => value.clamp(0, 100) as u8,
-        _ => 100,
-    }
+    alpha_percent(&frame_parameter_value(i, frame, "alpha-background"))
+        .map(|value| value.clamp(0, 100) as u8)
+        .unwrap_or(100)
 }
 
 fn frame_ns_appearance(
