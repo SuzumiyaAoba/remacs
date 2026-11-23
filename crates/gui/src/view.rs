@@ -6417,6 +6417,7 @@ fn paint_grid_row_at(
         bounds,
         text_top,
         paint_line_height,
+        cell_width,
         default_background,
         grid.gamma_exponent,
         window,
@@ -6693,6 +6694,7 @@ fn paint_vscroll_regions(
                     bounds,
                     row_top,
                     line_height,
+                    cell_width,
                     default_background,
                     grid.gamma_exponent,
                     window,
@@ -6837,6 +6839,109 @@ fn paint_grid_compositions(
 
 /// CellStyle → (foreground, background) for gpui; `:inverse-video'
 /// swaps the two (default palette entries stand in for unset sides).
+fn box_window_owner(
+    grid: &Grid,
+    row: usize,
+    line: &ShapedLine,
+    cell_width: Pixels,
+    start: usize,
+    end: usize,
+) -> Option<usize> {
+    if cell_width <= px(0.0) {
+        return None;
+    }
+    let segment = grid
+        .pixelwise_segments
+        .iter()
+        .find(|segment| segment.row == row && start >= segment.start && end <= segment.end);
+    if let Some(segment) = segment
+        && let Some(area) = grid.window_text_areas.iter().find(|area| {
+            row >= area.top
+                && row < area.top.saturating_add(area.rows)
+                && area.left.saturating_sub(area.left_fringe) <= segment.left_column
+                && area
+                    .left
+                    .saturating_add(area.width)
+                    .saturating_add(area.right_fringe)
+                    >= segment.right_column
+        })
+    {
+        return Some(area.window_id);
+    }
+
+    let left = grid_line_x(grid, row, line, start);
+    let right = grid_line_x(grid, row, line, end);
+    let center_column = (f32::from((left + right) / 2.0) / f32::from(cell_width))
+        .floor()
+        .max(0.0) as usize;
+    grid.window_text_areas
+        .iter()
+        .find(|area| {
+            let full_left = area.left.saturating_sub(area.left_fringe);
+            let full_right = area
+                .left
+                .saturating_add(area.width)
+                .saturating_add(area.right_fringe);
+            row >= area.top
+                && row < area.top.saturating_add(area.rows)
+                && center_column >= full_left
+                && center_column < full_right
+        })
+        .map(|area| area.window_id)
+}
+
+fn box_window_clip(
+    grid: &Grid,
+    row: usize,
+    window_id: usize,
+    bounds: Bounds<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
+    start: usize,
+    end: usize,
+) -> Option<Bounds<Pixels>> {
+    let area = grid.window_text_areas.iter().find(|area| {
+        area.window_id == window_id
+            && row >= area.top
+            && row < area.top.saturating_add(area.rows)
+    })?;
+    let segment = grid
+        .pixelwise_segments
+        .iter()
+        .find(|segment| segment.row == row && start >= segment.start && end <= segment.end);
+    let (left, right) = if let Some(segment) = segment {
+        let left = cell_width * segment.left_column as f32 + px(segment.x_offset as f32);
+        let width = (cell_width * (segment.right_column - segment.left_column) as f32
+            + px(segment.width_adjustment as f32))
+            .max(px(0.0));
+        (left, left + width)
+    } else {
+        let left_column = area.left.saturating_sub(area.left_fringe);
+        let right_column = area
+            .left
+            .saturating_add(area.width)
+            .saturating_add(area.right_fringe);
+        (
+            cell_width * left_column as f32,
+            cell_width * right_column as f32,
+        )
+    };
+    if right <= left {
+        return None;
+    }
+    let top = grid_window_row_top(grid, window_id, area.top, line_height);
+    let bottom = grid_window_row_top(
+        grid,
+        window_id,
+        area.top.saturating_add(area.rows),
+        line_height,
+    );
+    (bottom > top).then_some(Bounds {
+        origin: point(bounds.left() + left, bounds.top() + top),
+        size: size(right - left, bottom - top),
+    })
+}
+
 fn paint_face_boxes(
     grid: &Grid,
     row_index: usize,
@@ -6844,6 +6949,7 @@ fn paint_face_boxes(
     bounds: Bounds<Pixels>,
     row_top: Pixels,
     line_height: Pixels,
+    cell_width: Pixels,
     default_background: u32,
     gamma_exponent: Option<f64>,
     window: &mut Window,
@@ -6859,11 +6965,18 @@ fn paint_face_boxes(
     else {
         return;
     };
-    let mut current: Option<(BoxStyle, Option<CellColor>, Option<CellColor>, usize, usize)> = None;
+    let mut current: Option<(
+        BoxStyle,
+        Option<CellColor>,
+        Option<CellColor>,
+        usize,
+        usize,
+        Option<usize>,
+    )> = None;
     for (index, (byte, character)) in text.char_indices().enumerate() {
         let style = styles.get(index).copied().unwrap_or_default();
         let Some(box_style) = style.box_style else {
-            if let Some((box_style, fg, bg, start, end)) = current.take() {
+            if let Some((box_style, fg, bg, start, end, window_id)) = current.take() {
                 paint_box_run(
                     grid,
                     row_index,
@@ -6876,6 +6989,8 @@ fn paint_face_boxes(
                     bg,
                     start,
                     end,
+                    window_id,
+                    cell_width,
                     default_background,
                     gamma_exponent,
                     window,
@@ -6884,14 +6999,18 @@ fn paint_face_boxes(
             continue;
         };
         let end = byte + character.len_utf8();
+        let window_id = box_window_owner(grid, row_index, line, cell_width, byte, end);
         match &mut current {
-            Some((active, fg, bg, _, active_end))
-                if *active == box_style && *fg == style.fg && *bg == style.bg =>
+            Some((active, fg, bg, _, active_end, active_window_id))
+                if *active == box_style
+                    && *fg == style.fg
+                    && *bg == style.bg
+                    && *active_window_id == window_id =>
             {
                 *active_end = end;
             }
             _ => {
-                if let Some((box_style, fg, bg, start, end)) = current.take() {
+                if let Some((box_style, fg, bg, start, end, active_window_id)) = current.take() {
                     paint_box_run(
                         grid,
                         row_index,
@@ -6904,16 +7023,18 @@ fn paint_face_boxes(
                         bg,
                         start,
                         end,
+                        active_window_id,
+                        cell_width,
                         default_background,
                         gamma_exponent,
                         window,
                     );
                 }
-                current = Some((box_style, style.fg, style.bg, byte, end));
+                current = Some((box_style, style.fg, style.bg, byte, end, window_id));
             }
         }
     }
-    if let Some((box_style, fg, bg, start, end)) = current {
+    if let Some((box_style, fg, bg, start, end, window_id)) = current {
         paint_box_run(
             grid,
             row_index,
@@ -6926,6 +7047,8 @@ fn paint_face_boxes(
             bg,
             start,
             end,
+            window_id,
+            cell_width,
             default_background,
             gamma_exponent,
             window,
@@ -6946,6 +7069,8 @@ fn paint_box_run(
     background: Option<CellColor>,
     start: usize,
     end: usize,
+    window_id: Option<usize>,
+    cell_width: Pixels,
     default_background: u32,
     gamma_exponent: Option<f64>,
     window: &mut Window,
@@ -7010,7 +7135,28 @@ fn paint_box_run(
         )
     };
 
+    let clip = window_id.and_then(|window_id| {
+        box_window_clip(
+            grid,
+            row_index,
+            window_id,
+            bounds,
+            cell_width,
+            line_height,
+            start,
+            end,
+        )
+    });
     let mut paint_rect = |x: Pixels, y: Pixels, width: Pixels, height: Pixels, color: u32| {
+        let (x, y, width, height) = if let Some(clip) = clip.as_ref() {
+            let left = x.max(clip.left());
+            let top = y.max(clip.top());
+            let right = (x + width).min(clip.origin.x + clip.size.width);
+            let bottom = (y + height).min(clip.origin.y + clip.size.height);
+            (left, top, right - left, bottom - top)
+        } else {
+            (x, y, width, height)
+        };
         if width > px(0.0) && height > px(0.0) {
             window.paint_quad(fill(
                 Bounds {
