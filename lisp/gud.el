@@ -1545,12 +1545,17 @@ Used in `repeat-mode'."
   "c" #'gud-cont
   "l" #'gud-refresh)
 
+(defun gud-perldb--direct-perl-program-p (program)
+  "Return non-nil when PROGRAM names a Perl executable."
+  (and (stringp program)
+       (string-match-p
+        "\\`perl\\(?:[0-9.]+\\)?\\(?:\\.exe\\)?\\'"
+        (file-name-nondirectory program))))
+
 (defun gud-perldb-massage-args (_file args)
   "Convert a command line as would be typed normally to run perldb
 into one that invokes an Emacs-enabled debugging session.
 \"-emacs\" is inserted where it will be $ARGV[0] (see perl5db.pl)."
-  ;; FIXME: what if the command is `make perldb' and doesn't accept those extra
-  ;; arguments ?
   (let* ((new-args nil)
 	 (seen-e nil)
 	 (shift (lambda () (push (pop args) new-args))))
@@ -1683,8 +1688,24 @@ working directory and source-file directory for your debugger."
        (list (concat gud-perldb-command-name " "
                      (shell-quote-argument file) " "))))))
 
-  (gud-common-init command-line 'gud-perldb-massage-args
-		   'gud-perldb-marker-filter)
+  (let* ((program (car (split-string-and-unquote command-line)))
+         (direct-perl (gud-perldb--direct-perl-program-p program))
+         (process-environment (copy-sequence process-environment)))
+    (unless direct-perl
+      ;; perl5db.pl recognizes -emacs only as its first argument.  A wrapper
+      ;; such as `make perldb' cannot accept that flag itself, so inject it
+      ;; into the child Perl debugger through its supported PERL5DB hook.
+      (let ((perl5db (getenv "PERL5DB")))
+        (unless (and perl5db (not (equal perl5db "")))
+          (setq perl5db "BEGIN { require 'perl5db.pl' }"))
+        (setenv
+         "PERL5DB"
+         (concat
+          "BEGIN { unshift @main::ARGV, '-emacs' unless @main::ARGV && $main::ARGV[0] eq '-emacs'; }\n"
+          perl5db))))
+    (gud-common-init command-line
+                     (and direct-perl #'gud-perldb-massage-args)
+                     'gud-perldb-marker-filter))
   (setq-local gud-minor-mode 'perldb)
 
   (gud-def gud-break  "b %l"         "\C-b" "Set breakpoint at current line.")
