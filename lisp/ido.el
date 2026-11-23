@@ -2873,13 +2873,16 @@ The optional FALLBACK-COMMAND argument indicates which command to run."
       (setq dir (nth i ido-work-directory-list))
       (if (and dir
 	       (not (equal dir ido-current-directory))
-	       (file-directory-p dir)
-	       (or (not must-match)
-		   ;; TODO. check for nonreadable and too-big.
-		   (ido-set-matches-1
-		    (if (eq ido-cur-item 'file)
-			(ido-make-file-list-1 dir)
-		      (ido-make-dir-list-1 dir)))))
+	       (condition-case nil
+		   (and (file-directory-p dir)
+			(not (ido-nonreadable-directory-p dir))
+			(or (not must-match)
+			    ;; TODO. check for too-big.
+			    (ido-set-matches-1
+			     (if (eq ido-cur-item 'file)
+				 (ido-make-file-list-1 dir)
+			       (ido-make-dir-list-1 dir)))))
+		 (file-error nil)))
 	  (setq j n)
 	(setq dir nil)))
     (if dir
@@ -3385,15 +3388,18 @@ instead removed from the current item list."
 	      (setq dirs (cons ido-current-directory dirs)))
 	  (while dirs
 	    (setq dir (car dirs)
-		  dirs (cdr dirs))
+		  dirs (cdr dirs)
+		  fl nil)
 	    (when (and dir (stringp dir)
 		       (or ido-merge-ftp-work-directories
 			   (not (ido-is-ftp-directory dir)))
-		       (file-directory-p dir)
-		       ;; TODO. check for nonreadable and too-big.
-		       (setq fl (if (eq ido-cur-item 'file)
-				    (ido-make-file-list-1 dir t)
-				  (ido-make-dir-list-1 dir t))))
+		       (condition-case nil
+			   (and (file-directory-p dir)
+				(not (ido-nonreadable-directory-p dir))
+				(setq fl (if (eq ido-cur-item 'file)
+					     (ido-make-file-list-1 dir t)
+					   (ido-make-dir-list-1 dir t))))
+			 (file-error nil)))
 	      (if must-match
 		  (setq fl (ido-set-matches-1 fl)))
 	      (if fl
