@@ -1547,6 +1547,19 @@ fn macroexpand_all_expanded(
             let closure_id = i.q("closure");
             let funcall_id = i.q("funcall");
             if let Some(id) = i.sym_id(&car) {
+                if matches!(id, sym::LET | sym::LET_STAR) && items.len() < 3 {
+                    let mut normalized = items.clone();
+                    if normalized.len() == 1 {
+                        normalized.push(Value::Nil);
+                    }
+                    normalized.push(Value::Nil);
+                    return macroexpand_prepend_preserving(
+                        i,
+                        &expanded,
+                        normalized,
+                        Value::Nil,
+                    );
+                }
                 match id {
                     // `(closure ENV ARGLIST BODY...)': env and arglist
                     // are data positions like `lambda''s arglist.
