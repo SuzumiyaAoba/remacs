@@ -558,7 +558,15 @@ S should not contain folded content lines."
              (backward-char))
            (icalendar-parse-params (point-max)))
           ((icalendar-value-type-symbol-p type)
-           (icalendar-parse-value-node type (point-max)))
+           (let* ((node (icalendar-parse-value-node type (point-max)))
+                  (begin (icalendar-ast-node-meta-get :begin node))
+                  (end (icalendar-ast-node-meta-get :end node)))
+             (unless (and (= begin (point-min))
+                          (= end (point-max)))
+               (icalendar-signal-parse-error
+                (format "Unexpected text outside %s value" type)
+                :position (if (= begin (point-min)) end (point-min))))
+             node))
           (t
            (error "Don't know how to parse type %s" type)))))
 
