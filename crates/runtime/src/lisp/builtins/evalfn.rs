@@ -2073,9 +2073,6 @@ fn macroexpand_all_expanded(
                         let clauses = macroexpand_list_tail(i, &expanded, 1)?;
                         let clauses = macroexpand_live_spine(i, &clauses, |i, clause| {
                             if let Value::Cons(_) = clause {
-                                let Some(_) = macroexpand_list_to_vec(i, clause)? else {
-                                    return Ok(Value::Nil);
-                                };
                                 let expanded_clause =
                                     macroexpand_live_spine(i, clause, macroexpand_all_recur)?;
                                 macroexpand_preserve_spine(i, clause, expanded_clause)
