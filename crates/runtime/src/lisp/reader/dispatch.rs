@@ -144,6 +144,19 @@ impl Reader<'_> {
                     }
                     return Ok(Value::Nil);
                 }
+                // Function streams count N characters before scanning to the
+                // record separator. If N itself consumes that separator, GNU
+                // ends this read instead of skipping on to the next record.
+                if matches!(&self.source, super::ReadSource::Function { .. }) {
+                    for _ in 0..n {
+                        let Some(c) = self.next()? else {
+                            return Err(eof_err(self.interp));
+                        };
+                        if c == '\u{1f}' {
+                            return Err(eof_err(self.interp));
+                        }
+                    }
+                }
                 while let Some(c) = self.peek()? {
                     self.pos += 1;
                     if c == '\u{1f}' {
