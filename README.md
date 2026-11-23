@@ -134,6 +134,11 @@ remacs --help
 Batch mode also honors `--funcall/-f`, `--load/-l`, `--eval`/`--execute`,
 and consumes `command-line-args-left` like GNU.
 
+On macOS, `makers bundle-macos` creates `target/fast-dev/Remacs.app` with
+incoming Services for opening selected text or files and composing mail.
+Install and launch that app bundle for the Services menu entries; a directly
+launched `cargo run` executable has no `NSServices` bundle declaration.
+
 ## Development
 
 Diagnostics (all env-gated, inert unless set):

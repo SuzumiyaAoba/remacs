@@ -494,6 +494,15 @@ token to `endActivity:` used to crash), `ns-badge`,
 `Nextstep windows are not in use or not initialized` /
 `Window system frame should be used` (misc.rs).
 
+Incoming macOS Services use the AppKit provider registered by
+`crates/gui/src/lib.rs::register_native_service_provider`. The service
+messages are declared in `packaging/macos/Info.plist`; all four use
+`requestService:userData:error:` and distinguish `open-selection`,
+`open-file`, `mail-selection`, and `mail-to` through `NSUserData`. Build
+`target/fast-dev/Remacs.app` with `makers bundle-macos` so Launch Services can
+read the `NSServices` declaration; a direct `cargo run` executable has no app
+bundle metadata to advertise these entries.
+
 Startup: `term/ns-win`, `term/common-win` and `fontset` are
 pre-registered features, so `(require ...)` would skip them — they
 are loaded explicitly with `load_library` in `Interp::new` after the

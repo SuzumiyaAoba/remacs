@@ -3,6 +3,7 @@
 #   makers                 build (debug)
 #   makers run             run the gpui GUI          [files...]
 #   makers run-nw          run the terminal UI       [files...]
+#   makers bundle-macos    build Remacs.app with incoming Services
 #   makers eval "(+ 1 2)"  evaluate a Lisp form and exit
 #   makers script foo.el   run a Lisp file and exit
 #   makers probe f.txt     diff remacs vs GNU Emacs on a corpus file
@@ -182,4 +183,12 @@ description = "Build the GUI without the terminal adapter."
 script = '''
 exec python3 tools/guarded_exec.py --preset build -- \
     cargo build -p remacs-gui --jobs 2
+'''
+
+[tasks.bundle-macos]
+description = "Build Remacs.app with incoming macOS Services."
+script = '''
+rtk python3 tools/guarded_exec.py --preset build -- \
+    cargo build --profile fast-dev --bin remacs || exit $?
+exec rtk python3 tools/package_macos_app.py --profile fast-dev
 '''
