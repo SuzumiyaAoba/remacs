@@ -877,6 +877,7 @@ pub(crate) fn coding_known(i: &Interp, v: &Value) -> Option<String> {
         _ => return None,
     };
     if i.obarray.symbol(symbol).uninterned
+        && i.q_soft(&name) != Some(symbol)
         && !i.extra_coding_alias_symbols.contains(&symbol)
         && !i.extra_coding_system_symbols.contains(&symbol)
     {
@@ -1335,7 +1336,7 @@ pub(super) fn f_coding_system_base(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         .any(|(alias, _)| *alias == name)
     {
         let base = coding_canonical(i, &a[0]);
-        return Ok(Value::Sym(i.intern(&base)));
+        return Ok(coding_alias_symbol(i, &base));
     }
     // GNU: the bare EOL names `unix'/`dos'/`mac' are subsidiaries of
     // `undecided' (its eol-type vector), not self-based.
@@ -1356,9 +1357,9 @@ pub(super) fn f_coding_system_base(i: &mut Interp, a: crate::lisp::Argv) -> Eval
         .iter()
         .find(|&&(n, grp)| n == base || grp.iter().any(|m| *m == base))
     {
-        return Ok(Value::Sym(i.intern(group[0])));
+        return Ok(coding_alias_symbol(i, group[0]));
     }
-    Ok(Value::Sym(i.intern(base)))
+    Ok(coding_alias_symbol(i, base))
 }
 
 pub(crate) fn f_coding_system_plist(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
