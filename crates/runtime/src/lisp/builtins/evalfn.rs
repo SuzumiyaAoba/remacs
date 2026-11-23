@@ -2102,9 +2102,16 @@ fn macroexpand_all_expanded(
                                             {
                                                 return Ok(unfolded);
                                             }
-                                            // Unfoldable-but-unsafe shapes
-                                            // keep the whole original form.
-                                            return Ok(expanded);
+                                            // GNU retains the call after
+                                            // expanding its function and
+                                            // actual arguments, even when
+                                            // lambda unfolding is unsafe.
+                                            return macroexpand_prepend_preserving(
+                                                i,
+                                                &expanded,
+                                                vec![items[0].clone(), eexp],
+                                                Value::list(eargs),
+                                            );
                                         }
                                     }
                                 }
