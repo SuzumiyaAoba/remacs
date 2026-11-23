@@ -318,6 +318,48 @@ Any terminating `>' or `/' is not matched.")
   "`sgml-mode' face used to highlight the namespace part of identifiers.")
 (defvar sgml-namespace-face 'sgml-namespace)
 
+(defconst sgml--dtd-attribute-type-re
+  (concat
+   "\\(?:CDATA\\|ID\\(?:REFS?\\)?\\|ENTITY\\|ENTITIES\\|NMTOKEN\\(?:S\\)?"
+   "\\|\\(?:NOTATION[ \t\n]+\\)?("
+   "[ \t\n]*" sgml-name-re
+   "\\(?:[ \t\n]*|[ \t\n]*" sgml-name-re "\\)*"
+   "[ \t\n]*)\\)"))
+
+(defun sgml--inside-attlist-declaration-p (position)
+  "Return non-nil if POSITION is inside a DTD ATTLIST declaration."
+  (save-match-data
+    (save-excursion
+      (goto-char position)
+      (when (re-search-backward "<![ \t\n]*ATTLIST\\>" nil t)
+        (let ((attlist-after (match-end 0))
+              (attlist-end nil)
+              quote)
+          (goto-char attlist-after)
+          (while (and (not attlist-end)
+                      (re-search-forward "[\"'>]" position t))
+            (let ((character (char-before)))
+              (cond
+               (quote
+                (when (eq character quote)
+                  (setq quote nil)))
+               ((memq character '(?\" ?'))
+                (setq quote character))
+               ((eq character ?>)
+                (setq attlist-end t)))))
+          (and (not attlist-end) (not quote)))))))
+
+(defun sgml-font-lock-dtd-attribute (limit)
+  "Match the next DTD ATTLIST attribute before LIMIT."
+  (let ((case-fold-search t)
+        (regexp (concat "\\(" sgml-name-re "\\)[ \t\n]+"
+                        sgml--dtd-attribute-type-re)))
+    (catch 'found
+      (while (re-search-forward regexp limit t)
+        (when (sgml--inside-attlist-declaration-p (match-beginning 1))
+          (throw 'found t)))
+      nil)))
+
 ;; internal
 (defconst sgml-font-lock-keywords-1
   `((,(concat "<\\([!?]" sgml-name-re "\\)") 1 'font-lock-keyword-face)
@@ -326,6 +368,7 @@ Any terminating `>' or `/' is not matched.")
     (,(concat "</?\\(" sgml-namespace-re "\\)\\(?::\\(" sgml-name-re "\\)\\)?")
      (1 (if (match-end 2) 'sgml-namespace 'font-lock-function-name-face))
      (2 'font-lock-function-name-face nil t))
+    (sgml-font-lock-dtd-attribute (1 font-lock-variable-name-face))
     ;; The first shy-group is an important anchor: it prevents an O(n^2)
     ;; pathological case where we otherwise keep retrying a failing match
     ;; against a very long word at every possible position within the word.
