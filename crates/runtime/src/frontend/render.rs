@@ -4387,6 +4387,74 @@ fn render_menu_bar(i: &Interp) -> Vec<GridMenu> {
     i.native_menus.clone()
 }
 
+fn tool_bar_wrap_marker_p(i: &Interp, definition: &Value) -> bool {
+    let Some(menu_item) = i.q_soft("menu-item") else {
+        return false;
+    };
+    let Some(wrap) = i.q_soft(":wrap") else {
+        return false;
+    };
+    let Ok(parts) = definition.list_to_vec() else {
+        return false;
+    };
+    if !matches!(parts.first(), Some(Value::Sym(symbol)) if *symbol == menu_item) {
+        return false;
+    }
+    let properties = Value::list(parts.into_iter().skip(3).collect());
+    crate::lisp::eval::plist_get(&properties, wrap).truthy()
+}
+
+fn fallback_tool_bar_items(
+    i: &Interp,
+    map: &Value,
+) -> Vec<super::menu_commands::PreparedToolBarItem> {
+    let mut items = Vec::new();
+    let mut wrap_pending = false;
+    for (key, definition) in crate::editor::keymap_own_bindings(i, map) {
+        if tool_bar_wrap_marker_p(i, &definition) {
+            wrap_pending = true;
+            continue;
+        }
+        let (mut label, command, separator) = menu_label_and_definition(i, &key, &definition);
+        let name = match command {
+            Value::Sym(symbol) if i.fbound_p(symbol) => Some(i.symbol_name(symbol)),
+            _ if separator => None,
+            _ => continue,
+        };
+        if let Ok(parts) = definition.list_to_vec() {
+            let properties = Value::list(parts.into_iter().skip(3).collect());
+            if let Some(property) = i.q_soft(":label")
+                && let Value::Str(value) = crate::lisp::eval::plist_get(&properties, property)
+            {
+                label = value.borrow().to_unicode_lossy();
+            }
+        }
+        if wrap_pending {
+            if items
+                .iter()
+                .any(|item: &super::menu_commands::PreparedToolBarItem| !item.item.separator)
+            {
+                items.push(super::menu_commands::PreparedToolBarItem::row_break());
+            }
+            wrap_pending = false;
+        }
+        items.push(super::menu_commands::PreparedToolBarItem {
+            item: GridMenuItem {
+                label,
+                help: None,
+                command: name,
+                command_id: None,
+                items: Vec::new(),
+                separator,
+                checked: false,
+                key_hint: None,
+            },
+            image: None,
+        });
+    }
+    items
+}
+
 pub(crate) fn tool_bar_rows_for_frame(
     i: &Interp,
     frame: &crate::editor::FrameRef,
@@ -4398,16 +4466,24 @@ pub(crate) fn tool_bar_rows_for_frame(
     let configured = crate::editor::frame_parameter_positive_size(i, frame, "tool-bar-lines", 0);
     let frame_id = frame.borrow().id;
     // An empty separator in a prepared toolbar snapshot marks a secondary row.
-    let wrapped_rows = i
-        .native_menu_commands
-        .tool_bar(frame_id)
-        .map(|items| {
-            items
-                .iter()
-                .filter(|item| item.item.separator && item.item.label.is_empty())
-                .count()
-        })
-        .unwrap_or(0);
+    let wrapped_rows = if let Some(items) = i.native_menu_commands.tool_bar(frame_id) {
+        items
+            .iter()
+            .filter(|item| item.item.separator && item.item.label.is_empty())
+            .count()
+    } else if let Some(map_id) = i.q_soft("tool-bar-map") {
+        let buffer_id = frame.borrow().selected.borrow().buffer;
+        let map = i
+            .buffer_local_toplevel_value(map_id, buffer_id)
+            .or_else(|| i.default_toplevel_value(map_id))
+            .unwrap_or(Value::Nil);
+        fallback_tool_bar_items(i, &map)
+            .iter()
+            .filter(|item| item.item.separator && item.item.label.is_empty())
+            .count()
+    } else {
+        0
+    };
     configured
         .saturating_add(wrapped_rows)
         .min(frame_height.saturating_sub(1))
@@ -4618,40 +4694,7 @@ fn render_tool_bar(
     let bindings = if let Some(items) = i.native_menu_commands.tool_bar(frame.id) {
         items
     } else {
-        fallback = crate::editor::keymap_own_bindings(i, &map)
-            .into_iter()
-            .filter_map(|(key, definition)| {
-                let (mut label, command, separator) =
-                    menu_label_and_definition(i, &key, &definition);
-                let name = match command {
-                    Value::Sym(symbol) if i.fbound_p(symbol) => Some(i.symbol_name(symbol)),
-                    _ if separator => None,
-                    _ => return None,
-                };
-                if let Ok(parts) = definition.list_to_vec() {
-                    let properties = Value::list(parts.into_iter().skip(3).collect());
-                    if let Some(property) = i.q_soft(":label")
-                        && let Value::Str(value) =
-                            crate::lisp::eval::plist_get(&properties, property)
-                    {
-                        label = value.borrow().to_unicode_lossy();
-                    }
-                }
-                Some(super::menu_commands::PreparedToolBarItem {
-                    item: GridMenuItem {
-                        label,
-                        help: None,
-                        command: name,
-                        command_id: None,
-                        items: Vec::new(),
-                        separator,
-                        checked: false,
-                        key_hint: None,
-                    },
-                    image: None,
-                })
-            })
-            .collect::<Vec<_>>();
+        fallback = fallback_tool_bar_items(i, &map);
         &fallback
     };
     for prepared in bindings {

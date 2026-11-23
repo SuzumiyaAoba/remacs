@@ -57,6 +57,24 @@ pub(crate) struct PreparedToolBarItem {
     pub(crate) image: Option<GridImage>,
 }
 
+impl PreparedToolBarItem {
+    pub(crate) fn row_break() -> Self {
+        Self {
+            item: GridMenuItem {
+                label: String::new(),
+                help: None,
+                command: None,
+                command_id: None,
+                items: Vec::new(),
+                separator: true,
+                checked: false,
+                key_hint: None,
+            },
+            image: None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct PreparedTabBarItem {
     pub(crate) item: GridMenuItem,

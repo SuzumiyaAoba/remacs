@@ -158,6 +158,7 @@ struct MenuProperties {
     help: Value,
     enable: Value,
     image: Value,
+    wrap: bool,
     /// Retain the value cell, since a dynamic name can replace its function.
     filter: Option<Value>,
     selected: Value,
@@ -169,6 +170,7 @@ struct MenuProperties {
 fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuProperties>, Flow> {
     let help_property = i.q(":help");
     let image_property = i.q(":image");
+    let wrap_property = i.q(":wrap");
     let enable = i.q(":enable");
     let active = i.q(":active");
     let visible = i.q(":visible");
@@ -182,6 +184,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
     let mut enable_form = Value::t();
     let mut help = Value::Nil;
     let mut image = Value::Nil;
+    let mut wrap = false;
     let mut filter_cell = None;
     let mut selected = Value::Nil;
     let mut keys = Value::Nil;
@@ -225,6 +228,8 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
             help = substitute_help(i, form)?;
         } else if matches!(property, Value::Sym(symbol) if symbol == image_property) {
             image = form;
+        } else if matches!(property, Value::Sym(symbol) if symbol == wrap_property) {
+            wrap = form.truthy();
         } else if matches!(property, Value::Sym(symbol) if symbol == filter) {
             filter_cell = Some(Value::Cons(value.clone()));
         } else if matches!(property, Value::Sym(symbol) if symbol == keys_property) {
@@ -259,6 +264,7 @@ fn menu_properties(i: &mut Interp, mut properties: Value) -> Result<Option<MenuP
         help,
         enable: enable_form,
         image,
+        wrap,
         filter: filter_cell,
         selected,
         keys,
@@ -295,6 +301,7 @@ pub(super) struct ParsedMenuItem {
     pub(super) definition: Value,
     pub(super) separator: bool,
     pub(super) enabled: bool,
+    pub(super) wrap: bool,
     selected: Value,
     keys: Value,
     key_sequence: Option<Value>,
@@ -441,6 +448,7 @@ pub(super) fn keymap_item(
                 definition,
                 separator,
                 enabled,
+                wrap: properties.wrap,
                 selected: properties.selected,
                 keys: properties.keys,
                 key_sequence: properties.key_sequence,
@@ -482,6 +490,7 @@ pub(super) fn keymap_item(
         definition,
         separator,
         enabled: true,
+        wrap: false,
         selected: Value::Nil,
         keys: Value::Nil,
         key_sequence: None,

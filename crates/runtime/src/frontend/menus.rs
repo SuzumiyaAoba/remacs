@@ -423,6 +423,10 @@ fn tool_bar_items(
         let Some(item) = keymap_item(i, &key, &binding)? else {
             continue;
         };
+        if item.wrap {
+            wrap_pending = true;
+            continue;
+        }
         let definition = crate::editor::keymap_def(i, item.definition.clone())?;
         if !item.separator
             && (definition.is_nil()
@@ -465,19 +469,7 @@ fn tool_bar_items(
                 .iter()
                 .any(|item: &PreparedToolBarItem| !item.item.separator)
             {
-                items.push(PreparedToolBarItem {
-                    item: GridMenuItem {
-                        label: String::new(),
-                        help: None,
-                        command: None,
-                        command_id: None,
-                        items: Vec::new(),
-                        separator: true,
-                        checked: false,
-                        key_hint: None,
-                    },
-                    image: None,
-                });
+                items.push(PreparedToolBarItem::row_break());
             }
             wrap_pending = false;
         }
