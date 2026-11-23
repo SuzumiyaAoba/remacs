@@ -2663,10 +2663,14 @@ impl Render for EditorView {
         }
         if self.button_activation_subscription.is_none() {
             self.button_activation_subscription =
-                Some(cx.observe_window_activation(window, |view, window, _cx| {
+                Some(cx.observe_window_activation(window, |view, window, cx| {
                     let active = window.is_window_active();
                     if !active {
                         view.pressed_button = None;
+                    }
+                    if cfg!(target_os = "macos") && active {
+                        cx.set_menu_bar_items(gpui_menus(&view.grid.menus));
+                        view.installed_menus = view.grid.menus.clone();
                     }
                     if let Some(frame_id) = view.tx.frame_id() {
                         let update = frame_activation_update(
@@ -2717,7 +2721,9 @@ impl Render for EditorView {
             self.last_window_active = None;
         }
         self.update_window_title(window);
-        if self.installed_menus != self.grid.menus {
+        if self.installed_menus != self.grid.menus
+            && (!cfg!(target_os = "macos") || active)
+        {
             cx.set_menu_bar_items(gpui_menus(&self.grid.menus));
             self.installed_menus = self.grid.menus.clone();
         }
