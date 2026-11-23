@@ -64,7 +64,7 @@ impl Interp {
         self.put_prop(te, em, Value::string("Generic tree-sitter error"));
         for &(name, msg) in conditions::TREE_SITTER {
             put(self, name, &[name, "treesit-error", "error"]);
-            let s = self.intern(name);
+            let s = self.q(name);
             self.put_prop(s, em, Value::string(msg));
         }
         for (name, msg) in conditions::MESSAGES {
