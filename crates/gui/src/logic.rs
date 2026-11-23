@@ -3081,6 +3081,11 @@ impl ChanIo {
         move_cursor: bool,
         tab_width: usize,
     ) -> Grid {
+        if use_grid_cursor && text.chars().any(char::is_control) {
+            // The renderer already applied ctl-arrow and kept its row layout.
+            // Re-fitting raw input here would discard both transformations.
+            return grid;
+        }
         let echo_row = rows.saturating_sub(1);
         let selected_cursor = use_grid_cursor
             .then(|| grid.cursors.iter().find(|cursor| cursor.selected).copied())
