@@ -119,15 +119,23 @@ impl Interp {
             ),
             ("revert-buffer-function", "revert-buffer--default"),
             ("forward-sexp-function", "forward-sexp-default-function"),
-            (
-                "hack-read-symbol-shorthands-function",
-                "hack-read-symbol-shorthands",
-            ),
         ] {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).value = Value::Sym(self.intern(val));
         }
-        for name in ["print-gensym", "print-escape-newlines", "print-circle"] {
+        // The source loader consults this hook before each source read.
+        // The helper is installed by the later `subr-x' boot load, so keep
+        // the hook disabled until that definition exists.
+        let id = self.intern("hack-read-symbol-shorthands-function");
+        self.obarray.symbol_mut(id).value = Value::Nil;
+        // GNU's built-in purify flag is nil in ordinary dumped images.  CL
+        // generic uses it while eagerly installing its dispatcher cache.
+        for name in [
+            "print-gensym",
+            "print-escape-newlines",
+            "print-circle",
+            "purify-flag",
+        ] {
             let id = self.intern(name);
             self.obarray.symbol_mut(id).value = Value::Nil;
         }

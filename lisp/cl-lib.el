@@ -578,7 +578,7 @@ If ALIST is non-nil, the new pairs are prepended to it."
                      (or (intern-soft (concat name "p"))
                          (intern-soft (concat name "-p"))
                          type)))
-               (fboundp predicate))))
+               (fboundp predicate)))))
 
   (cl-defmethod cl-generic-generalizers :extra "derived-types" (type)
     "Support for dispatch on derived types, i.e. defined with `cl-deftype'."

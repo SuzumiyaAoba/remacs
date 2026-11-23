@@ -1079,6 +1079,22 @@ command-line arguments.\" \
     }
 
     fn load_boot_libraries(interp: &mut Self) {
+        // GNU's loadup loads macroexp before byte-run and cl-generic.  The
+        // Rust evaluator supplies the core expansion entry points, but the
+        // Lisp helpers (including `internal-macroexpand-for-load') still
+        // need to be live before the first dumped source libraries load.
+        let _ = boot_lib(interp, "macroexp");
+        // Keep GNU's load-expansion hook, but use the Rust deep walker behind
+        // its full-pass helper from the first eager load.  Waiting until
+        // subr-x has loaded leaves macroexp.el's recursive Lisp walker active
+        // while cl-generic loads cl-lib through `eval-when-compile'.
+        if let Some(subr) = crate::lisp::builtins::evalfn::SUBRS
+            .iter()
+            .find(|s| s.name == "macroexpand--all-toplevel")
+        {
+            let id = interp.intern(subr.name);
+            interp.fset(id, Value::Subr(subr));
+        }
         // Seed `defun-declarations-alist'/`macro-declarations-alist'
         // with byte-run.el's values *before* loading it.  The prelude
         // binds both to nil (so its early `(declare (gv-expander ...))'
@@ -1207,7 +1223,27 @@ command-line arguments.\" \
         // `help-add-fundoc-usage' → `help--docstring-quote' during
         // eager macro-expansion; loading help first keeps those
         // expansions bound like GNU's dump order.
+        let _ = boot_lib(interp, "help-macro");
         let _ = boot_lib(interp, "help");
+        // cl-generic needs the dumped CL macro machinery at runtime.  Its
+        // source-only `eval-when-compile' requires are skipped while loading
+        // dump stand-ins, so install those runtime definitions explicitly.
+        let _ = boot_lib(interp, "cl-lib");
+        let _ = boot_lib(interp, "cl-macs");
+        // Remacs marks dumped definitions as compiled for runtime parity,
+        // which makes cl-generic's source probe pick `byte-compile' even
+        // though the byte-compiler is unavailable during this bootstrap.
+        // Match the interpreter branch used by the source library.
+        let _ = interp.eval_str(
+            "(defvar cl--generic-compiler (lambda (exp) (eval exp t)))",
+        );
+        // cl-generic's compile-time subr-x load encounters menu items whose
+        // filters call `tool-bar-make-keymap'. GNU's GUI dump has that helper
+        // available already, so establish the tool-bar definitions here.
+        let _ = boot_lib(interp, "tool-bar");
+        // subr-x and menu-bar also use tab-bar's menu filter while loading.
+        // The prelude already initializes frameset-filter-alist.
+        let _ = boot_lib(interp, "tab-bar");
         // cl-generic.el is in GNU's dump (the `cl-generic' feature
         // is pre-registered): its `cl-defmethod' forms install the
         // real generalizer methods (`cl-generic-generalizers' for
@@ -1248,19 +1284,29 @@ command-line arguments.\" \
         // (GNU dodges this by never dumping subr-x — it's pure
         // autoloads; we need its functions at -Q, so order wins.)
         let _ = boot_lib(interp, "register");
+        // The boot subr-x amalgam includes VC menu definitions and expands
+        // their filters eagerly, so install vc-hooks before that load.
+        let _ = boot_lib(interp, "vc-hooks");
+        // The amalgam's eager load uses `string-pixel-width' while
+        // expanding its pixelwise helpers. GNU's real subr-x source owns
+        // that definition; load it first so those expansions have it.
+        let _ = boot_lib(interp, "emacs-lisp-subr-x");
         // subr-x.el is also in GNU's dump: it holds the accumulated
         // GNU-verbatim compatibility definitions (string trim/pad,
         // fringe helpers, paren/select/vc/dnd support, …).
         let _ = boot_lib(interp, "subr-x");
-        // Keep GNU's load-expansion hook, but use the Rust deep
-        // walker behind its full-pass helper.  Interpreting the
-        // amalgam's pcase-heavy walker exceeds Lisp depth at loadup.
-        if let Some(subr) = crate::lisp::builtins::evalfn::SUBRS
-            .iter()
-            .find(|s| s.name == "macroexpand--all-toplevel")
-        {
-            let id = interp.intern(subr.name);
-            interp.fset(id, Value::Subr(subr));
+        // `hack-read-symbol-shorthands' is folded into the boot-time
+        // subr-x amalgam, while its source-file hook defaults to that
+        // function in GNU's image.  The early bootstrap value is nil so
+        // libraries loaded before subr-x don't call an unavailable
+        // helper; enable it as soon as the definition is installed.
+        let shorthands_loader = interp.q("hack-read-symbol-shorthands");
+        if !matches!(
+            interp.symbol_function(shorthands_loader),
+            Value::Sym(s) if s == sym::UNBOUND
+        ) {
+            let shorthands_hook = interp.q("hack-read-symbol-shorthands-function");
+            let _ = interp.set_symbol(shorthands_hook, Value::Sym(shorthands_loader));
         }
         // GNU's subr.el defvar (mostly populated by loaddefs.el
         // autoload cookies); compat.el's cookie pushes
@@ -1273,13 +1319,6 @@ command-line arguments.\" \
                  (push (list 'compat emacs-major-version emacs-minor-version 9999) \
                        package--builtin-versions)",
         );
-        // tool-bar.el is in GNU's dump on window-system builds
-        // (loadup.el): same reasoning — the feature mark alone
-        // would make `require' skip the definitions.
-        // GNU menu-bar.el owns its constructors. The serialized prelude
-        // Edit snapshot dropped function-valued properties to nil.
-        let _ = boot_lib(interp, "menu-bar");
-        let _ = boot_lib(interp, "tool-bar");
         // widget.el is dumped too (loadup.el loads "widget" for
         // `define-widget' & co. used by cus-edit and friends).
         let _ = boot_lib(interp, "widget");
@@ -1298,10 +1337,6 @@ command-line arguments.\" \
         // are loaddefs autoloads at -Q, so the prelude-folded
         // definitions get stashed+autoloaded below rather than the
         // file being eagerly loaded here.
-        // vc-hooks.el is in GNU's dump (loadup.el): its defcustoms
-        // (`vc-handled-backends', `vc-ignore-dir-regexp', ...) and
-        // the vc-file-* property machinery are bound at -Q.
-        let _ = boot_lib(interp, "vc-hooks");
         // uniquify.el is dumped too; GNU's loadup order runs it
         // after vc-hooks, so `uniquify-kill-buffer-function'
         // prepends ahead of `vc-kill-buffer-hook'.
@@ -1371,10 +1406,6 @@ command-line arguments.\" \
         // library's entry points and provides the `loaddefs'
         // feature, both visible at -Q.
         let _ = boot_lib(interp, "loaddefs");
-        // tab-bar.el is in GNU's dump (loadup.el): tab-bar-mode,
-        // tab-new, tab-switcher & co. are bound at -Q.  It needs
-        // loaddefs's `frameset-filter-alist' defvar, hence the order.
-        let _ = boot_lib(interp, "tab-bar");
         // image.el is in GNU's dump too (loadup.el): image-mode,
         // `image-load-path', `insert-image' & co. are bound at -Q.
         let _ = boot_lib(interp, "image");
@@ -1422,6 +1453,9 @@ command-line arguments.\" \
         let _ = interp.set_symbol(dump_mode, Value::string("dump"));
         let _ = boot_lib(interp, "characters");
         let _ = interp.set_symbol(dump_mode, Value::Nil);
+        // menu-bar.el consumes `mule-menu-keymap'; load it after mule-cmds
+        // has installed the multilingual menu bindings.
+        let _ = boot_lib(interp, "menu-bar");
         // The language-specific files are all in GNU's dump
         // (loadup.el:219-247, after mule-cmds/charprop/composite):
         // their charset registration, `set-language-environment'
@@ -1490,11 +1524,10 @@ command-line arguments.\" \
             "scroll-bar",
             "text-mode",
             "timer",
-            // GNU's dump also has newcomment.el, image.el and
-            // tab-bar.el (loadup.el).  json.el is a plain library.
+            // GNU's dump also has newcomment.el and image.el.  json.el is a
+            // plain library.
             "newcomment",
             "image",
-            "tab-bar",
             // mwheel/t-mouse/windmove are NOT dumped by GNU's
             // loadup: their `:init-value t' modes reach
             // `global-minor-modes' via the `add-to-list' autoload

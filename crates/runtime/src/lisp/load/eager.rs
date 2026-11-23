@@ -346,13 +346,96 @@ fn native_backend_bridges(
     .collect()
 }
 
-/// Expand + eval one top-level form the way GNU's
-/// `internal-macroexpand-for-load' does during `load': the form is
-/// expanded; a top-level `progn' is spliced so each child is expanded
-/// and evaluated in turn (an autoloaded macro in a later child is not
-/// resolved until that child's expansion runs, matching GNU's
-/// observable autoload timing).
+/// Whether FORM is compile-only work in GNU's already byte-compiled dump.
+fn is_boot_compile_only_form(
+    i: &mut Interp,
+    form: &Value,
+) -> Result<bool, crate::lisp::Flow> {
+    if !i.boot_loading {
+        return Ok(false);
+    }
+    let Value::Cons(outer) = form else {
+        return Ok(false);
+    };
+    let (head, body) = crate::lisp::eval::cons_parts(i, outer)?;
+    let prefill = i.q("cl--generic-prefill-dispatchers");
+    if i.sym_id(&head) == Some(prefill) {
+        // GNU's dump has these prefilled dispatchers from byte compilation.
+        // Remacs builds them lazily; evaluating the source macro would try
+        // to invoke the unavailable byte-compiler during startup.
+        return Ok(true);
+    }
+    let eval_when_compile = i.q("eval-when-compile");
+    if i.sym_id(&head) != Some(eval_when_compile) {
+        return Ok(false);
+    }
+    let Ok(body) = body.list_to_vec() else {
+        return Ok(false);
+    };
+    if body.is_empty() {
+        return Ok(false);
+    }
+    let require = i.q("require");
+    for form in body {
+        let Value::Cons(call) = form else {
+            return Ok(false);
+        };
+        let (head, _) = crate::lisp::eval::cons_parts(i, &call)?;
+        if i.sym_id(&head) != Some(require) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether FORM is a top-level definition or scope that should be evaluated
+/// without walking its full body during boot.
+fn is_boot_shallow_form(i: &Interp, form: &Value) -> bool {
+    let Value::Cons(cell) = form else {
+        return false;
+    };
+    let head = cell.borrow().car.clone();
+    i.sym_id(&head).is_some_and(|id| {
+        matches!(
+            i.symbol_name(id).as_str(),
+            "defalias"
+                | "defvar"
+                | "defconst"
+                | "let"
+                | "let*"
+                | "custom-declare-variable"
+                | "custom-declare-face"
+        )
+    })
+}
+
+/// Function-definition macros in dump stand-ins need only their outer
+/// expansion; their bodies remain interpreted by Remacs.
+fn is_boot_macro_definition_form(i: &Interp, form: &Value) -> bool {
+    let Value::Cons(cell) = form else {
+        return false;
+    };
+    let head = cell.borrow().car.clone();
+    i.sym_id(&head).is_some_and(|id| {
+        matches!(
+            i.symbol_name(id).as_str(),
+            "defcustom" | "defface" | "define-minor-mode"
+        )
+    })
+}
+
+/// Expand and evaluate one top-level form the way GNU's
+/// `internal-macroexpand-for-load' does. A top-level `progn' is spliced so
+/// each child is expanded only after earlier children run, preserving
+/// observable autoload timing.
 fn eval_for_load(i: &mut Interp, form: Value, expander: &Value) -> EvalResult {
+    let skip_deep_expansion = i.boot_loading && is_boot_macro_definition_form(i, &form);
+    // Boot sources stand in for GNU's already byte-compiled dump. Compile-
+    // only requires and dispatcher prefill forms have no load-time work in
+    // those files; expanding them here can pull unavailable compiler helpers.
+    if is_boot_compile_only_form(i, &form)? {
+        return Ok(Value::Nil);
+    }
     let expanded = if expander.is_nil() {
         form
     } else {
@@ -366,6 +449,14 @@ fn eval_for_load(i: &mut Interp, form: Value, expander: &Value) -> EvalResult {
                 last = eval_for_load(i, child, expander)?;
             }
             return Ok(last);
+        }
+        // Boot sources stand in for compiled dump definitions. Expanding
+        // every function body or deeply nested top-level data table is
+        // unnecessary for the interpreter and can exceed the Lisp depth
+        // limit. Expand the top-level head, then let normal eval process
+        // these definitions and scopes.
+        if skip_deep_expansion || (i.boot_loading && is_boot_shallow_form(i, &head)) {
+            return i.eval(&head);
         }
         // Non-progn forms, including function bodies, receive the full
         // expansion pass.  The GNU hook also handles expansion failures
