@@ -867,7 +867,9 @@ impl Interp {
                 // The argument of an unquote is outside the enclosing
                 // backquote; nested comma forms there must print as data.
                 Value::Sym(sym::COMMA) if bq => (",", false),
-                Value::Sym(sym::COMMA_AT) if bq => (",@", bq),
+                // A nested splice argument, like an ordinary unquote, is
+                // printed outside the enclosing backquote context.
+                Value::Sym(sym::COMMA_AT) if bq => (",@", false),
                 Value::Sym(sym::COMMA_DOT) if bq => (",.", bq),
                 _ => return Ok(None),
             };
