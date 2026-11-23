@@ -913,9 +913,58 @@ fn sf_setq(i: &mut Interp, args: Value) -> EvalResult {
     setq_pairs(i, &args, false, sym::SETQ)
 }
 
-/// GNU refuses to turn a variable into a dynamic/special variable while its
-/// current lexical environment already contains a lexical binding for it.
-/// This check is shared by defvar, defconst and Custom's declaration helper.
+/// Whether a live closure in the current lexical environment carries ID in
+/// its captured environment. A lexical binding alone does not prevent a later
+/// `defvar'/`defconst' declaration; an existing closure would be broken by
+/// switching that binding to dynamic scope.
+fn lexical_closure_captures_variable(i: &mut Interp, id: SymId) -> Result<bool, Flow> {
+    let mut cursor = crate::lisp::eval::lexenv_as_value_checked(&i.lexenv)
+        .map_err(|error| error.into_flow(i))?;
+    let mut seen = FxHashSet::default();
+    loop {
+        match cursor.clone() {
+            Value::Nil => return Ok(false),
+            Value::Cons(cell) => {
+                if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                    return Err(i.signal_data(sym::CIRCULAR_LIST, vec![cursor.clone()]));
+                }
+                let (binding, next) = cons_parts(i, &cell)?;
+                if let Value::Cons(binding) = binding {
+                    let (_, value) = cons_parts(i, &binding)?;
+                    let closure = match value {
+                        Value::Lambda(lambda) => Some(lambda),
+                        Value::Cons(cell) => {
+                            let (head, definition) = cons_parts(i, &cell)?;
+                            if i.sym_is(&head, sym::MACRO) {
+                                if let Value::Lambda(lambda) = definition {
+                                    Some(lambda)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(closure) = closure
+                        && crate::lisp::eval::lexenv_lookup_checked(&closure.env, id)
+                            .map_err(|error| error.into_flow(i))?
+                            .is_some()
+                    {
+                        return Ok(true);
+                    }
+                }
+                cursor = next;
+            }
+            _ => return Ok(false),
+        }
+    }
+}
+
+/// GNU refuses to turn a variable into a dynamic/special variable when an
+/// existing lexical closure has captured its binding. This check is shared
+/// by defvar, defconst and Custom's declaration helper.
 pub(crate) fn check_dynamic_variable_declaration(
     i: &mut Interp,
     id: SymId,
@@ -927,7 +976,7 @@ pub(crate) fn check_dynamic_variable_declaration(
     let already_lexical = crate::lisp::eval::lexenv_lookup_checked(&i.lexenv, id)
         .map_err(|error| error.into_flow(i))?
         .is_some();
-    if already_lexical {
+    if already_lexical && lexical_closure_captures_variable(i, id)? {
         return Err(i.signal_data(
             sym::ERROR,
             vec![
