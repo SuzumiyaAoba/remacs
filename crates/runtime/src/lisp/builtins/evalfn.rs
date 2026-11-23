@@ -1234,6 +1234,39 @@ fn macroexpand_live_form_spine(
     Ok(result)
 }
 
+/// Whether COND's TEST is known to be non-nil without evaluating it.
+/// GNU `macroexp--expand-all' uses this check before expanding any clause,
+/// so a macro that later expands to a constant does not hide warnings about
+/// unreachable clauses.
+fn macroexpand_cond_default_test(i: &mut Interp, test: &Value) -> Result<bool, Flow> {
+    match test {
+        Value::Nil => Ok(false),
+        Value::Sym(id) => Ok(*id == sym::T || is_keyword_id(i, *id)),
+        Value::Cons(cell) => {
+            let (head, tail) = crate::lisp::eval::cons_parts(i, cell)?;
+            if !i.sym_is(&head, sym::QUOTE) && !i.sym_is(&head, sym::FUNCTION) {
+                return Ok(false);
+            }
+            let value = match tail {
+                Value::Cons(cell) => crate::lisp::eval::cons_parts(i, &cell)?.0,
+                _ => Value::Nil,
+            };
+            Ok(value.truthy())
+        }
+        _ => Ok(true),
+    }
+}
+
+/// Whether CLAUSE has a test GNU recognizes as an unconditional `cond'
+/// default.  Non-list clauses are ignored by `macroexp--all-clauses'.
+fn macroexpand_cond_default_clause(i: &mut Interp, clause: &Value) -> Result<bool, Flow> {
+    let Value::Cons(cell) = clause else {
+        return Ok(false);
+    };
+    let test = crate::lisp::eval::cons_parts(i, cell)?.0;
+    macroexpand_cond_default_test(i, &test)
+}
+
 /// Look up SYM_ID in ENV's `(:cl-symbol-macros . BINDINGS)' entry.
 /// BINDINGS are `(SYM EXP)' pairs (GNU `cl-symbol-macrolet'), where
 /// `cl--sm-macroexpand-1' alpha-renaming also pushes `(VAR . NVAR)'
@@ -2108,14 +2141,29 @@ fn macroexpand_all_expanded(
                     }
                     sym::COND => {
                         // GNU `macroexp--expand-all': `(cond CLAUSES...)'
-                        // runs `macroexp--all-clauses' (skip 0) — every
-                        // element of every clause, test included, gets
-                        // expanded.  Without this arm the generic path
-                        // descends only into clause bodies, leaving a
-                        // `cl-macrolet'-bound call in test position
-                        // unexpanded (comp-cstr's `with-comp-cstr-
-                        // accessors' inside `cond' broke on this).
-                        let clauses = macroexpand_list_tail(i, &expanded, 1)?;
+                        // first trims clauses after an unconditional
+                        // default, then runs `macroexp--all-clauses' (skip
+                        // 0) on the live clauses that remain.
+                        let original_clauses = macroexpand_list_tail(i, &expanded, 1)?;
+                        let mut clauses = original_clauses.clone();
+                        let mut default_tail = None;
+                        for clause_index in 0..items.len().saturating_sub(2) {
+                            let clause = &items[clause_index + 1];
+                            if macroexpand_cond_default_clause(i, clause)? {
+                                // GNU's `take' makes a fresh outer spine
+                                // when clauses after a default are removed.
+                                // Clause objects themselves stay shared, so
+                                // mutations within an earlier clause remain
+                                // visible during expansion.
+                                default_tail = Some(macroexpand_list_tail(
+                                    i,
+                                    &original_clauses,
+                                    clause_index + 1,
+                                )?);
+                                clauses = Value::list(items[1..=clause_index + 1].to_vec());
+                                break;
+                            }
+                        }
                         let clauses = macroexpand_live_spine(i, &clauses, |i, clause| {
                             if let Value::Cons(_) = clause {
                                 let expanded_clause =
@@ -2125,12 +2173,34 @@ fn macroexpand_all_expanded(
                                 Ok(clause.clone())
                             }
                         })?;
-                        return macroexpand_prepend_preserving(
+                        let result = macroexpand_prepend_preserving(
                             i,
                             &expanded,
                             vec![items[0].clone()],
                             clauses,
-                        );
+                        )?;
+                        if let Some(default_tail) = default_tail {
+                            let warn = i.q("macroexp-warn-and-return");
+                            if i.fbound_p(warn) {
+                                let suspicious = i.q("suspicious");
+                                return i.apply(
+                                    &Value::Sym(warn),
+                                    vec![
+                                        Value::string(
+                                            "Useless clause following default `cond' clause",
+                                        ),
+                                        result,
+                                        Value::list(vec![
+                                            Value::Sym(suspicious),
+                                            Value::Sym(sym::COND),
+                                        ]),
+                                        Value::Sym(sym::T),
+                                        default_tail,
+                                    ],
+                                );
+                            }
+                        }
+                        return Ok(result);
                     }
                     _ => {}
                 }
