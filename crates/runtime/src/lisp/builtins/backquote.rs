@@ -512,8 +512,9 @@ fn bq_check_list(i: &mut Interp, v: &Value) -> Result<(), Flow> {
     }
 }
 
-/// GNU CHECK_LIST_CAR: every element of `list` must be a cons pair.
-/// Its cdr is the backquote FORM and may be dotted.
+/// GNU `backquote-listify' walks only cons cells in LIST. Each visited
+/// element must be a tag/form cons pair; the outer tail may be dotted, and
+/// each entry's cdr is a backquote FORM that may itself be dotted.
 fn bq_check_list_car(i: &mut Interp, list: &Value) -> Result<(), Flow> {
     let mut cur = list.clone();
     let mut seen = FxHashSet::default();
@@ -537,14 +538,14 @@ fn bq_check_list_car(i: &mut Interp, list: &Value) -> Result<(), Flow> {
                 bq_check_form_spine(i, &form, &car_v)?;
                 cur = cdr_v;
             }
-            other => return Err(i.wrong_type_mut("listp", other)),
+            // `backquote-listify' stops when the outer cursor is not a cons.
+            _ => return Ok(()),
         }
     }
 }
 
 /// CHECK_LIST_CAR entries permit a dotted FORM, but that form's cdr spine
-/// must still be finite. Signal with the entry itself, as GNU does, so this
-/// error precedes validation of OLD-TAIL.
+/// must still be finite. Signal with the entry itself, as GNU does.
 fn bq_check_form_spine(i: &mut Interp, form: &Value, entry: &Value) -> Result<(), Flow> {
     let mut cur = form.clone();
     let mut seen = FxHashSet::default();
@@ -602,7 +603,6 @@ fn f_backquote_listify(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU evaluates `(= (car old-tail) 0)' before checking LIST, so a bad
     // tag takes precedence over an improper list.
     bq_check_num_or_mark(i, &old_tail_tag)?;
-    bq_check_list(i, &a[0])?;
     bq_check_list_car(i, &a[0])?;
     let syms = bq_syms(i);
     bq_listify(i, &a[0], &a[1], &syms)
