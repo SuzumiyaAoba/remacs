@@ -2669,7 +2669,7 @@ fn frame_alpha(i: &Interp, frame: &remacs_runtime::editor::FrameRef) -> (u8, u8)
     let lower_limit = i
         .intern_soft("frame-alpha-lower-limit")
         .filter(|symbol| i.bound_p(*symbol))
-        .and_then(|symbol| i.symbol_value(symbol).int())
+        .and_then(|symbol| alpha_percent(&i.symbol_value(symbol)))
         .unwrap_or(20)
         .clamp(0, 100);
     let value = frame_parameter_value(i, frame, "alpha");
