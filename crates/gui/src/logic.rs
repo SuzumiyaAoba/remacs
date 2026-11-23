@@ -585,6 +585,7 @@ pub(super) struct FrameSnapshot {
     pub alpha_active: Option<u8>,
     pub alpha_inactive: Option<u8>,
     pub alpha_background: u8,
+    pub borders_respect_alpha_background: bool,
     pub width: usize,
     pub height: usize,
     pub width_size: Option<FrameSizeSpec>,
@@ -677,6 +678,12 @@ fn frame_snapshot(
         alpha_active,
         alpha_inactive,
         alpha_background,
+        borders_respect_alpha_background: frame_parameter_value(
+            i,
+            frame,
+            "borders-respect-alpha-background",
+        )
+        .truthy(),
         width,
         height,
         width_size: frame_size_parameter(i, frame, "width"),

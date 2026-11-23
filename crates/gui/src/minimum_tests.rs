@@ -75,6 +75,7 @@ fn native_frame_options_keep_the_viewport_at_least_three_rows_high() {
         alpha_active: Some(100),
         alpha_inactive: Some(100),
         alpha_background: 100,
+        borders_respect_alpha_background: false,
         width: 40,
         height: 12,
         width_size: None,

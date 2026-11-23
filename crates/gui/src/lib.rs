@@ -801,6 +801,8 @@ pub fn run_gui_with_dump(
                             let alpha_active = snapshot.alpha_active;
                             let alpha_inactive = snapshot.alpha_inactive;
                             let alpha_background = snapshot.alpha_background;
+                            let borders_respect_alpha_background =
+                                snapshot.borders_respect_alpha_background;
                             let internal_border_width = snapshot.internal_border_width;
                             let background_appearance = frame_background_appearance(&snapshot);
                             let ns_appearance = snapshot.ns_appearance;
@@ -935,6 +937,10 @@ pub fn run_gui_with_dump(
                                         view.set_internal_border_width(internal_border_width);
                                     let alpha_background_changed =
                                         view.set_alpha_background(alpha_background);
+                                    let borders_respect_alpha_background_changed = view
+                                        .set_borders_respect_alpha_background(
+                                            borders_respect_alpha_background,
+                                        );
                                     if view.set_no_accept_focus(window, no_accept_focus) {
                                         set_native_no_accept_focus(window, no_accept_focus);
                                     }
@@ -952,6 +958,7 @@ pub fn run_gui_with_dump(
                                         || minimum_size_changed
                                         || internal_border_changed
                                         || alpha_background_changed
+                                        || borders_respect_alpha_background_changed
                                         || appearance_changed
                                     {
                                         cx.notify();
@@ -1114,6 +1121,9 @@ pub fn run_gui_with_dump(
                                     }
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
+                                    view.set_borders_respect_alpha_background(
+                                        borders_respect_alpha_background,
+                                    );
                                     view.apply_minimum_cells(
                                         window,
                                         minimum_cells.0,
@@ -1255,6 +1265,9 @@ pub fn run_gui_with_dump(
                                     );
                                     view.set_modifier_mapping(modifier_mapping);
                                     view.set_alpha_background(alpha_background);
+                                    view.set_borders_respect_alpha_background(
+                                        borders_respect_alpha_background,
+                                    );
                                     view.set_appearance(window_appearance);
                                     view.set_image_cache_metrics(
                                         image_cache_entries,

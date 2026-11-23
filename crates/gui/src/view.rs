@@ -1853,6 +1853,7 @@ pub(super) struct EditorView {
     modifier_mapping: ModifierMapping,
     internal_border_width: usize,
     alpha_background: u8,
+    borders_respect_alpha_background: bool,
     appearance: WindowAppearance,
     physical_modifier_state: Rc<Cell<PhysicalModifierState>>,
     installed_menus: Vec<GridMenu>,
@@ -2079,6 +2080,7 @@ impl EditorView {
             modifier_mapping: ModifierMapping::default(),
             internal_border_width: 0,
             alpha_background: 100,
+            borders_respect_alpha_background: false,
             appearance: WindowAppearance::Dark,
             physical_modifier_state: Rc::new(Cell::new(PhysicalModifierState::default())),
             installed_menus: Vec::new(),
@@ -2242,6 +2244,14 @@ impl EditorView {
             return false;
         }
         self.alpha_background = alpha;
+        true
+    }
+
+    pub(super) fn set_borders_respect_alpha_background(&mut self, respect: bool) -> bool {
+        if self.borders_respect_alpha_background == respect {
+            return false;
+        }
+        self.borders_respect_alpha_background = respect;
         true
     }
 
@@ -2947,6 +2957,11 @@ impl Render for EditorView {
             |color| ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32,
         );
         let background_alpha = ((self.alpha_background as u32 * 255 + 50) / 100) as u8;
+        let border_alpha = if self.borders_respect_alpha_background {
+            background_alpha
+        } else {
+            255
+        };
         let default_background_fill = rgba((default_background << 8) | u32::from(background_alpha));
         let internal_border_background = self
             .grid
@@ -2956,7 +2971,7 @@ impl Render for EditorView {
                 ((color.0 as u32) << 16) | ((color.1 as u32) << 8) | color.2 as u32
             });
         let internal_border_fill =
-            rgba((internal_border_background << 8) | u32::from(background_alpha));
+            rgba((internal_border_background << 8) | u32::from(border_alpha));
         let modifier_mapping = self.modifier_mapping;
         let physical_modifier_state = self.physical_modifier_state.clone();
         let key_modifier_state = physical_modifier_state.clone();
@@ -4350,7 +4365,7 @@ impl Render for EditorView {
                             cell_width,
                             line_height,
                             default_background,
-                            background_alpha,
+                            border_alpha,
                             window,
                         );
                         for indicator in &grid.fill_column_indicators {
@@ -4825,7 +4840,7 @@ impl Render for EditorView {
                             cell_width,
                             line_height,
                             default_background,
-                            background_alpha,
+                            border_alpha,
                             window,
                         );
                         if bell_flash {
@@ -7041,7 +7056,8 @@ fn paint_right_dividers(
                 background_alpha,
                 grid.gamma_exponent,
             )
-            .0;
+            .0
+            .opacity(f32::from(background_alpha) / 255.0);
             window.paint_quad(fill(
                 Bounds {
                     origin: point(left + px(offset as f32), top),
@@ -7098,7 +7114,8 @@ fn paint_bottom_dividers(
                 background_alpha,
                 grid.gamma_exponent,
             )
-            .0;
+            .0
+            .opacity(f32::from(background_alpha) / 255.0);
             window.paint_quad(fill(
                 Bounds {
                     origin: point(left, top + px(offset as f32)),
