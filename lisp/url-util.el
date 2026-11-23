@@ -190,7 +190,7 @@ Will not do anything if `url-show-status' is nil."
 ;;;###autoload
 (defun url-display-percentage (fmt _perc &rest args)
   (declare (obsolete url-display-message "29.1"))
-  (url-display-message fmt args))
+  (apply #'url-display-message fmt args))
 
 ;;;###autoload
 (defun url-percentage (x y)
