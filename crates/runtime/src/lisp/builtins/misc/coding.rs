@@ -1387,7 +1387,7 @@ pub(crate) fn f_coding_system_plist(i: &mut Interp, a: crate::lisp::Argv) -> Eva
         // coding-system objects for utf-8-unix/-dos/-mac all carry
         // utf-8's attributes.
         let base = coding_canonical(i, &q);
-        let key = Value::Sym(i.intern(&base));
+        let key = coding_alias_symbol(i, &base);
         if let Some(entry) = assq(&i.symbol_value(table_id), &key) {
             if let Value::Cons(pair) = &entry {
                 let (_, val) = {
@@ -1530,7 +1530,9 @@ pub(super) fn f_coding_system_put(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
     }
     let table_id = i.q("remacs-coding-system-plists");
     let base = coding_canonical(i, &a[0]);
-    let base_symbol = i.intern(&base);
+    let Value::Sym(base_symbol) = coding_alias_symbol(i, &base) else {
+        unreachable!();
+    };
     let key = Value::Sym(base_symbol);
     // EOL is a spec field, not an attribute overridden by coding-system-put.
     // Retain the original field independently of the public property list.
