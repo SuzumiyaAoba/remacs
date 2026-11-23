@@ -3288,6 +3288,31 @@ impl Render for EditorView {
                         input::mouse_position_for_text_point_with_cell_width(
                             &this.grid, point, cell_width, window,
                         )
+                        .or_else(|| {
+                            input::mode_line_mouse_position_with_window(
+                                &this.grid,
+                                point,
+                                cell_width,
+                                window.scale_factor(),
+                                window,
+                            )
+                        })
+                        .or_else(|| {
+                            input::header_line_mouse_position(
+                                &this.grid,
+                                point,
+                                cell_width,
+                                window.scale_factor(),
+                            )
+                        })
+                        .or_else(|| {
+                            input::tab_line_mouse_position(
+                                &this.grid,
+                                point,
+                                cell_width,
+                                window.scale_factor(),
+                            )
+                        })
                     });
                     let text_window_id = point.and_then(|point| {
                         input::text_window_at_point(&this.grid, point, cell_width)

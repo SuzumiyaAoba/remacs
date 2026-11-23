@@ -1701,6 +1701,43 @@ fn mouse_movement_event(i: &mut Interp, position: Option<MousePosition>, modifie
     let position = position
         .and_then(|position| mouse_position_value(i, position))
         .unwrap_or(Value::Nil);
+    mouse_movement_event_with_position(i, position, modifiers)
+}
+
+fn gui_mouse_movement_event(
+    i: &mut Interp,
+    position: Option<MousePosition>,
+    modifiers: i128,
+) -> Value {
+    let position = position
+        .and_then(|position| mouse_position_value(i, position))
+        .or_else(|| {
+            let (frame_id, x, y) = i.gui_mouse_frame_pixel_position?;
+            let frame = i
+                .frames
+                .iter()
+                .find(|frame| frame.borrow().id == frame_id && !frame.borrow().dead)
+                .cloned()?;
+            let (column, row) = i
+                .gui_mouse_frame_position
+                .filter(|(id, _, _)| *id == frame_id)
+                .map(|(_, column, row)| (column, row))
+                .unwrap_or((0, 0));
+            Some(Value::list(vec![
+                Value::Frame(frame),
+                Value::Nil,
+                Value::cons(Value::Int(x), Value::Int(y)),
+                Value::Int(0),
+                Value::Nil,
+                Value::Nil,
+                Value::cons(Value::Int(column), Value::Int(row)),
+            ]))
+        })
+        .unwrap_or(Value::Nil);
+    mouse_movement_event_with_position(i, position, modifiers)
+}
+
+fn mouse_movement_event_with_position(i: &mut Interp, position: Value, modifiers: i128) -> Value {
     let name = mouse_event_name("mouse-movement", modifiers);
     Value::list(vec![Value::Sym(i.intern(&name)), position])
 }
@@ -1712,8 +1749,29 @@ fn dispatch_mouse_movement(
     keys: &mut Vec<i128>,
     arg_mode: &mut bool,
 ) -> io::Result<()> {
-    let name = mouse_event_name("mouse-movement", modifiers);
     let event = mouse_movement_event(i, position, modifiers);
+    dispatch_mouse_movement_event(i, event, modifiers, keys, arg_mode)
+}
+
+fn dispatch_gui_mouse_movement(
+    i: &mut Interp,
+    position: Option<MousePosition>,
+    modifiers: i128,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let event = gui_mouse_movement_event(i, position, modifiers);
+    dispatch_mouse_movement_event(i, event, modifiers, keys, arg_mode)
+}
+
+fn dispatch_mouse_movement_event(
+    i: &mut Interp,
+    event: Value,
+    modifiers: i128,
+    keys: &mut Vec<i128>,
+    arg_mode: &mut bool,
+) -> io::Result<()> {
+    let name = mouse_event_name("mouse-movement", modifiers);
     crate::editor::record_recent_input_event(i, event.clone());
     let key = crate::editor::event_code_for(&name);
     let sequence = Value::vector(vec![Value::Int(key)]);
@@ -1876,7 +1934,7 @@ fn dispatch_gui_mouse_move(
     // Lisp consumers such as mouse tracking modes observe ordinary pointer
     // motion through the same event used for a drag.
     if mouse_movement_tracking_enabled(i) {
-        dispatch_mouse_movement(i, position, modifiers, keys, arg_mode)?;
+        dispatch_gui_mouse_movement(i, position, modifiers, keys, arg_mode)?;
     }
     dispatch_gui_window_autoselect(
         i,
@@ -3908,13 +3966,13 @@ fn minibuf_loop<T: KeyIo>(
                         return Err(i.error(format!("minibuffer input: {error}")));
                     }
                     if mouse_movement_tracking_enabled(i) {
-                        return Ok(MinibufInput::Event(mouse_movement_event(
+                        return Ok(MinibufInput::Event(gui_mouse_movement_event(
                             i, position, modifiers,
                         )));
                     }
                 } else {
                     if mouse_movement_tracking_enabled(i)
-                        && let Err(error) = dispatch_mouse_movement(
+                        && let Err(error) = dispatch_gui_mouse_movement(
                             i,
                             position,
                             modifiers,

@@ -141,10 +141,14 @@ fn track_mouse_read_event_receives_mouse_moved_input() {
                                   (setq remacs-track-mouse-enabled track-mouse)
                                   (read-event))))
                       (setq remacs-read-event-result
-                            (list remacs-track-mouse-enabled
-                                  (mouse-movement-p event)
-                                  (car-safe event)
-                                  track-mouse))))
+                            (let ((position (nth 1 event)))
+                              (list remacs-track-mouse-enabled
+                                    (mouse-movement-p event)
+                                    (car-safe event)
+                                    track-mouse
+                                    (framep (posn-window position))
+                                    (posn-point position)
+                                    (posn-x-y position)))))
                   (global-set-key [f11] #'remacs-read-one-mouse-event)
                   (global-set-key [f12] (lambda () (interactive) (kill-emacs))))"#,
             )
@@ -175,8 +179,9 @@ fn track_mouse_read_event_receives_mouse_moved_input() {
 
             let result = i.intern("remacs-read-event-result");
             assert_eq!(
-                i.prin1_to_string(&i.symbol_value(result)).to_unicode_lossy(),
-                "(t t mouse-movement nil)"
+                i.prin1_to_string(&i.symbol_value(result))
+                    .to_unicode_lossy(),
+                "(t t mouse-movement nil t nil (8 . 19))"
             );
         })
         .unwrap()
