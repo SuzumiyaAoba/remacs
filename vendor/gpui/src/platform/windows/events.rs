@@ -392,7 +392,7 @@ impl WindowsWindowInner {
 
     fn handle_syskeydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let inputs = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let inputs = handle_key_event(handle, wparam, lparam, true, &mut lock, |keystroke| {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held: lparam.0 & (0x1 << 30) > 0,
@@ -418,7 +418,7 @@ impl WindowsWindowInner {
 
     fn handle_syskeyup_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let inputs = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let inputs = handle_key_event(handle, wparam, lparam, false, &mut lock, |keystroke| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         })?;
         let mut func = lock.callbacks.input.take()?;
@@ -438,7 +438,7 @@ impl WindowsWindowInner {
     // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
     fn handle_keydown_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(inputs) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let Some(inputs) = handle_key_event(handle, wparam, lparam, true, &mut lock, |keystroke| {
             PlatformInput::KeyDown(KeyDownEvent {
                 keystroke,
                 is_held: lparam.0 & (0x1 << 30) > 0,
@@ -473,7 +473,7 @@ impl WindowsWindowInner {
 
     fn handle_keyup_msg(&self, handle: HWND, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
-        let Some(inputs) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
+        let Some(inputs) = handle_key_event(handle, wparam, lparam, false, &mut lock, |keystroke| {
             PlatformInput::KeyUp(KeyUpEvent { keystroke })
         }) else {
             return Some(1);
@@ -1378,6 +1378,7 @@ fn handle_key_event<F>(
     handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
+    is_down: bool,
     state: &mut WindowsWindowState,
     f: F,
 ) -> Option<SmallVec<[PlatformInput; 2]>>
@@ -1389,9 +1390,15 @@ where
 
     match virtual_key {
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LMENU | VK_RMENU | VK_LWIN | VK_RWIN => {
-            if state
-                .last_reported_modifiers
-                .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
+            let changed_modifier = match virtual_key {
+                VK_LWIN => Some(ModifierKey::LeftCommand),
+                VK_RWIN => Some(ModifierKey::RightCommand),
+                _ => None,
+            };
+            if changed_modifier.is_none()
+                && state
+                    .last_reported_modifiers
+                    .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
             {
                 return None;
             }
@@ -1399,8 +1406,8 @@ where
             Some(smallvec![PlatformInput::ModifiersChanged(
                 ModifiersChangedEvent {
                     modifiers,
-                    changed_modifier: None,
-                    changed_modifier_is_down: None,
+                    changed_modifier,
+                    changed_modifier_is_down: changed_modifier.map(|_| is_down),
                     capslock: current_capslock(),
                 }
             )])

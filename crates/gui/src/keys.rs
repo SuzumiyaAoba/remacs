@@ -14,6 +14,7 @@ pub(super) enum EmacsModifier {
     Alt,
     Hyper,
     Super,
+    Shift,
 }
 
 impl EmacsModifier {
@@ -24,6 +25,7 @@ impl EmacsModifier {
             EmacsModifier::Alt => CHAR_ALT,
             EmacsModifier::Hyper => CHAR_HYPER,
             EmacsModifier::Super => CHAR_SUPER,
+            EmacsModifier::Shift => CHAR_SHIFT,
         }
     }
 }
@@ -127,9 +129,13 @@ fn windows_modifier_mapping(i: &Interp, defaults: ModifierMapping) -> ModifierMa
     } else {
         EmacsModifier::Alt
     }));
+    let left_window = modifier_setting(i, "w32-lwindow-modifier", defaults.left_command);
+    let right_window = modifier_setting(i, "w32-rwindow-modifier", defaults.right_command);
     ModifierMapping {
         left_alternate: alternate,
         right_alternate: alternate,
+        left_command: left_window,
+        right_command: right_window,
         ..defaults
     }
 }
@@ -185,6 +191,7 @@ fn modifier_from_value(i: &Interp, value: &Value) -> Option<EmacsModifier> {
         "alt" => Some(EmacsModifier::Alt),
         "hyper" => Some(EmacsModifier::Hyper),
         "super" => Some(EmacsModifier::Super),
+        "shift" => Some(EmacsModifier::Shift),
         _ => None,
     }
 }
