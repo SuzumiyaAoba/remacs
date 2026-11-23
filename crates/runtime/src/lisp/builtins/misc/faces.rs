@@ -242,7 +242,7 @@ pub(super) fn f_select_font(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult 
             ];
             f_font_spec(i, args.into())
         }
-        Ok(None) => Ok(Value::Nil),
+        Ok(None) => Err(Flow::Quit),
         Err(error) => Err(i.error(format!("Font selection failed: {error}"))),
     }
 }
