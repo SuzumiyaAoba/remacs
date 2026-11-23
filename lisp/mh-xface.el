@@ -252,7 +252,8 @@ elements of the list are nil."
   "Scale image in INPUT file and write to OUTPUT file using pnm tools."
   (let ((res (shell-command-to-string
               (format "anytopnm < %s | pnmscale -xysize 96 48 | pnmtopng > %s"
-                      input output))))
+                      (shell-quote-argument input)
+                      (shell-quote-argument output)))))
     (unless (equal res "")
       (delete-file output))))
 
