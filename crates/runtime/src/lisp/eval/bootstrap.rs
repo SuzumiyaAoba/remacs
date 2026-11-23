@@ -2668,6 +2668,7 @@ command-line arguments.\" \
             "erase-buffer",
             "eval-minibuffer",
             "first-change-hook",
+            "pre-redisplay-function",
             "function",
             "functionp",
             "AEAD-ciphers",
