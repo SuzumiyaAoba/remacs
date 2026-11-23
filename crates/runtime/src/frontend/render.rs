@@ -6599,6 +6599,9 @@ fn place_formatted_window_row(
     help_echoes: &mut Vec<GridHelpEcho>,
     pointer_regions: &mut Vec<GridPointerRegion>,
 ) -> Option<(usize, usize)> {
+    let mouse_highlight = i
+        .q_soft("mouse-highlight")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy());
     let screen_row = screen.get_mut(row)?;
     *context.properties.borrow_mut() = Some(ModeLineProperties::default());
     let mut fill_remaining = false;
@@ -6632,7 +6635,8 @@ fn place_formatted_window_row(
         if column.saturating_add(cells) > width {
             break;
         }
-        if cells > 0
+        if mouse_highlight
+            && cells > 0
             && mouse_face_column
                 .is_some_and(|hover| hover >= column && hover < column.saturating_add(cells))
             && let Some(mouse_face) = properties.mouse_face.as_ref()
@@ -8391,9 +8395,13 @@ fn window_faces(
             .window_id
             .or_else(|| crate::editor::sel_window(i).map(|window| window.borrow().id))
     });
+    let mouse_highlight = i
+        .q_soft("mouse-highlight")
+        .is_some_and(|symbol| i.symbol_value(symbol).truthy());
     let mouse_face_position = mouse_position
         .filter(|position| {
-            position.buffer_id == bb.id
+            mouse_highlight
+                && position.buffer_id == bb.id
                 && position.area.is_none()
                 && mouse_face_window_id.is_some_and(|window_id| {
                     matches!(win, Value::Window(window) if window.borrow().id == window_id)
