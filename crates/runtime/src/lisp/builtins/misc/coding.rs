@@ -1437,7 +1437,7 @@ pub(super) fn f_coding_system_get(i: &mut Interp, a: crate::lisp::Argv) -> EvalR
         a[0].clone()
     };
     match (coding_known(i, &cs), prop.as_str()) {
-        (Some(n), ":name") => Ok(Value::Sym(i.intern(&n))),
+        (Some(n), ":name") => Ok(coding_alias_symbol(i, &n)),
         (Some(n), ":coding-type") => Ok(Value::Sym(i.q(if n.starts_with("utf-8") {
             "utf-8"
         } else {
