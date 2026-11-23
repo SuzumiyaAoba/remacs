@@ -1062,7 +1062,9 @@ string POST."
          (insert (lambda (str)
                    (cond
                     ((>= col 0) (insert str))
-                    (t (insert (substring str (min (length str) (- col))))))))
+                    ;; HSCROLL is measured in display columns, not characters.
+                    (t (insert (truncate-string-to-width
+                                str (string-width str) (- col)))))))
          (pred #'always))
     (while (string-match "%\\(?:%\\|\\(-\\)?\\([0-9]+\\)?{\\([[:alpha:]][[:alnum:]]*\\)\\(?:-\\([^}]+\\)\\)?}\\)" format-spec pos)
       (let ((pre-text (substring format-spec pos (match-beginning 0))))
