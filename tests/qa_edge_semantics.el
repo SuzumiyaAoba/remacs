@@ -94,6 +94,27 @@
             (kill-local-variable alias))
           (defvaralias alias base))
         'error)
+(qa (progn
+      (setq qa-and-count 0)
+      (let* ((second-cell (cons nil nil))
+             (first-form
+              (list 'setcdr
+                    (list 'quote second-cell)
+                    (list 'quote second-cell)))
+             (second-form
+              (list 'progn
+                    (list 'setq 'qa-and-count (list '1+ 'qa-and-count))
+                    (list 'if
+                          (list '= 'qa-and-count 1)
+                          (list 'setcdr (list 'quote second-cell) nil))
+                    '(quote t)))
+             (form (cons 'and (cons first-form second-cell))))
+        (setcar second-cell second-form)
+        (list (condition-case err
+                  (eval form nil)
+                (error (list :error (car err))))
+              qa-and-count)))
+    '(t 2))
 
 (qa (time-convert '(1 2 . 3) 'list) '(1 2 3 0))
 (qa (time-convert '(1 2 3 . ignored) 'list) '(1 2 3 0))

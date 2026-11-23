@@ -328,15 +328,11 @@ fn sf_and(i: &mut Interp, args: Value) -> EvalResult {
     reject_circular_spine(i, &args)?;
     let mut cur = args;
     let mut last = Value::t();
-    let mut seen = FxHashSet::default();
     let mut until_quit = 1024usize;
     loop {
         match cur.clone() {
             Value::Nil => return Ok(last),
             Value::Cons(cell) => {
-                if !seen.insert(Rc::as_ptr(&cell) as usize) {
-                    return Err(i.signal_data(sym::CIRCULAR_LIST, vec![cur.clone()]));
-                }
                 // GNU saves the next cons before evaluating this form.
                 // Mutating this cell's cdr cannot insert or replace the
                 // next argument, though mutating that saved cell's car
