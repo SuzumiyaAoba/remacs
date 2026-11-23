@@ -494,61 +494,51 @@ fn let_var(i: &mut Interp, v: &Value) -> Result<SymId, Flow> {
 }
 
 fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
-    let mut cur = car(i, &args)?;
-    // GNU detects an already-circular binding list before evaluating any
-    // initializer. Initializers can mutate the live spine, so the main
-    // walk also remembers cells and checks for cycles introduced later.
-    let mut seen = FxHashSet::default();
-    let mut scan = cur.clone();
-    let mut scan_steps = 0usize;
-    while let Value::Cons(cell) = scan.clone() {
-        if !seen.insert(Rc::as_ptr(&cell) as usize) {
-            return Err(i.signal_data(sym::CIRCULAR_LIST, vec![scan.clone()]));
-        }
-        scan_steps = scan_steps.wrapping_add(1);
-        if scan_steps & 1023 == 0 {
-            i.maybe_quit()?;
-        }
-        scan = cdr(i, &scan)?;
-    }
-    seen.clear();
-    // GNU walks the binding list as it evaluates each initializer. The
-    // current binding's value-form is captured before evaluation, but the
-    // next cdr is read after it, so edits to later specs remain visible.
-    // Keep each outer binding cell until the parallel binding phase: GNU
-    // reads its variable name only after all initializers have run.
-    let mut evaluated = Vec::new();
+    let initial_varlist = car(i, &args)?;
+    // GNU `Flet' calls `list_length' before evaluating any initializer.
+    // This validates dotted/circular spines and fixes how many initializer
+    // slots will be filled, even if an initializer later edits the spine.
+    let initial_nvars = i.proper_list_to_vec(&initial_varlist)?.len();
+    let mut cur = initial_varlist;
+    let mut evaluated = Vec::with_capacity(initial_nvars);
     let mut until_quit = 1024usize;
-    loop {
-        match cur.clone() {
-            Value::Nil => break,
-            Value::Cons(cell) => {
-                if !seen.insert(Rc::as_ptr(&cell) as usize) {
-                    return Err(i.signal_data(sym::CIRCULAR_LIST, vec![Value::Cons(cell.clone())]));
-                }
-                let spec = car(i, &Value::Cons(cell.clone()))?;
-                let (_, init) = parse_let_spec(i, &spec)?;
-                let value = eval_let_init(i, &init, cons_site(&cell))?;
-                evaluated.push((Value::Cons(cell.clone()), value));
-                cur = cdr(i, &Value::Cons(cell.clone()))?;
-                until_quit -= 1;
-                if until_quit == 0 {
-                    i.maybe_quit()?;
-                    until_quit = 1024;
-                }
-            }
-            other => return Err(i.wrong_type_mut("listp", &other)),
+    for _ in 0..initial_nvars {
+        let Value::Cons(cell) = cur.clone() else {
+            break;
+        };
+        let spec = car(i, &Value::Cons(cell.clone()))?;
+        // The initializer walk saves the next cdr before evaluating the
+        // current binding; later cells remain live through their own cdrs.
+        cur = cdr(i, &Value::Cons(cell.clone()))?;
+        let (_, init) = parse_let_spec(i, &spec)?;
+        let value = eval_let_init(i, &init, cons_site(&cell))?;
+        evaluated.push(value);
+        until_quit -= 1;
+        if until_quit == 0 {
+            i.maybe_quit()?;
+            until_quit = 1024;
         }
     }
     if i.lexical_binding_active() {
         let frame = crate::lisp::eval::lexenv_extend_checked(&i.lexenv)
             .map_err(|error| error.into_flow(i))?;
+        let mut cur = car(i, &args)?;
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
         let mut until_quit = 1024usize;
-        for (binding, val) in evaluated {
-            let spec = match car(i, &binding) {
+        for val in evaluated {
+            let Value::Cons(cell) = cur.clone() else {
+                break;
+            };
+            let spec = match car(i, &Value::Cons(cell.clone())) {
                 Ok(spec) => spec,
+                Err(error) => {
+                    r = Err(error);
+                    break;
+                }
+            };
+            cur = match cdr(i, &Value::Cons(cell)) {
+                Ok(next) => next,
                 Err(error) => {
                     r = Err(error);
                     break;
@@ -599,12 +589,23 @@ fn sf_let(i: &mut Interp, args: Value) -> EvalResult {
         i.unbind_to(mark)?;
         r
     } else {
+        let mut cur = car(i, &args)?;
         let mark = i.specbind_depth();
         let mut r = Ok(Value::Nil);
         let mut until_quit = 1024usize;
-        for (binding, val) in evaluated {
-            let spec = match car(i, &binding) {
+        for val in evaluated {
+            let Value::Cons(cell) = cur.clone() else {
+                break;
+            };
+            let spec = match car(i, &Value::Cons(cell.clone())) {
                 Ok(spec) => spec,
+                Err(error) => {
+                    r = Err(error);
+                    break;
+                }
+            };
+            cur = match cdr(i, &Value::Cons(cell)) {
+                Ok(next) => next,
                 Err(error) => {
                     r = Err(error);
                     break;
