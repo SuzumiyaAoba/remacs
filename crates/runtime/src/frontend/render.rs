@@ -11618,8 +11618,8 @@ fn grid_pointer_shape(i: &Interp, value: Option<&Value>) -> GridPointerShape {
         "hand" => GridPointerShape::Hand,
         "hourglass" => GridPointerShape::Hourglass,
         "hdrag" => GridPointerShape::ResizeHorizontal,
-        "nhdrag" => GridPointerShape::ResizeVertical,
-        "arrow" | "vdrag" | "modeline" => GridPointerShape::Arrow,
+        "vdrag" | "nhdrag" => GridPointerShape::ResizeVertical,
+        "arrow" | "modeline" => GridPointerShape::Arrow,
         _ => GridPointerShape::Arrow,
     }
 }
