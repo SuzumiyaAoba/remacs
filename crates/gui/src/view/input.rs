@@ -1617,12 +1617,9 @@ impl EntityInputHandler for EditorView {
             let (column, row) = self.grid.cursor?;
             let row_text = self.grid.rows.get(row)?;
             let cursor_index = self.grid.cursor_index;
-            let base_x = self
-                .grid
-                .cursor_index
-                .and_then(|index| {
-                    Some(shape_grid_row(&self.grid, row, window, row_text).x_for_index(index))
-                })
+            let (row_layout, _) = shape_grid_row_with_bidi(&self.grid, row, window, row_text);
+            let base_x = cursor_index
+                .map(|index| super::grid_line_x(&self.grid, row, &row_layout, index))
                 .unwrap_or(self.cell_width * column as f32);
             let (composition_font, composition_font_size) = grid_font_at_byte(
                 &self.grid,
@@ -1740,8 +1737,8 @@ impl EntityInputHandler for EditorView {
             } else {
                 (end, start - end)
             };
-            let base_line = shape_grid_row(&self.grid, row, window, row_text);
-            let base_x = base_line.x_for_index(base_byte);
+            let (base_line, _) = shape_grid_row_with_bidi(&self.grid, row, window, row_text);
+            let base_x = super::grid_line_x(&self.grid, row, &base_line, base_byte);
             let column = (f32::from(base_x) / f32::from(self.cell_width)) as usize;
             return Some(Bounds {
                 origin: point(
@@ -1765,16 +1762,18 @@ impl EntityInputHandler for EditorView {
         let (row, start_byte) = visible_input_position(&self.grid, base_range.start, false)?;
         let end_position = visible_input_position(&self.grid, base_range.end, true);
         let row_text = self.grid.rows.get(row)?;
-        let layout = shape_grid_row(&self.grid, row, window, row_text);
-        let start = layout.x_for_index(start_byte);
+        let (layout, _) = shape_grid_row_with_bidi(&self.grid, row, window, row_text);
+        let start = super::grid_line_x(&self.grid, row, &layout, start_byte);
         let end = match end_position {
-            Some((end_row, end_byte)) if end_row == row => layout.x_for_index(end_byte),
+            Some((end_row, end_byte)) if end_row == row => {
+                super::grid_line_x(&self.grid, row, &layout, end_byte)
+            }
             _ => input
                 .rows
                 .iter()
                 .find(|input_row| input_row.row == row)
                 .and_then(|input_row| input_row.source_offsets.last().copied())
-                .map(|byte| layout.x_for_index(byte))
+                .map(|byte| super::grid_line_x(&self.grid, row, &layout, byte))
                 .unwrap_or(layout.width),
         };
         let (left, text_width) = if end >= start {
