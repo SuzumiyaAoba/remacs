@@ -3170,7 +3170,61 @@ impl Render for EditorView {
                         content_left_offset,
                         content_top_offset,
                     );
-                    let _ = this.tx.send_mouse_move(None, Some(absolute_position));
+                    let point = frame_content_point(
+                        event.position,
+                        window.viewport_size(),
+                        border,
+                    );
+                    let position = point.and_then(|point| {
+                        input::mouse_position_for_text_point_with_cell_width(
+                            &left_mouse_down_grid,
+                            point,
+                            cell_width,
+                            window,
+                        )
+                        .or_else(|| {
+                            input::mode_line_mouse_position_with_window(
+                                &left_mouse_down_grid,
+                                point,
+                                cell_width,
+                                window.scale_factor(),
+                                window,
+                            )
+                        })
+                        .or_else(|| {
+                            input::header_line_mouse_position(
+                                &left_mouse_down_grid,
+                                point,
+                                cell_width,
+                                window.scale_factor(),
+                            )
+                        })
+                        .or_else(|| {
+                            input::tab_line_mouse_position(
+                                &left_mouse_down_grid,
+                                point,
+                                cell_width,
+                                window.scale_factor(),
+                            )
+                        })
+                    });
+                    let text_window_id = point.and_then(|point| {
+                        input::text_window_at_point(&left_mouse_down_grid, point, cell_width)
+                    });
+                    let modifiers = mouse_modifier_bits(
+                        &event.modifiers,
+                        modifier_mapping,
+                        left_mouse_down_modifiers.get(),
+                    );
+                    let target =
+                        position.map(|position| (position.buffer_id, position.buffer_position));
+                    let _ = this.mouse_face_position.replace(target);
+                    let _ = this.tx.send_mouse_move_for_window(
+                        position,
+                        Some(absolute_position),
+                        text_window_id,
+                        modifiers,
+                    );
                     let resize_edges = if this.drag_internal_border {
                         frame_resize_edges(
                             event.position,
@@ -3180,9 +3234,7 @@ impl Render for EditorView {
                     } else {
                         None
                     };
-                    let Some(point) =
-                        frame_content_point(event.position, window.viewport_size(), border)
-                    else {
+                    let Some(point) = point else {
                         if let Some(edges) = resize_edges {
                             this.frame_drag = Some(FrameDrag {
                                 kind: FrameDragKind::Resize(edges),
