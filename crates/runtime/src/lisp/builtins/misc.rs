@@ -140,7 +140,7 @@ use positions::{
 mod coding;
 #[allow(unused_imports)] // misc::* compatibility re-exports
 pub(crate) use coding::{
-    CODING_ALIASES, CODING_SYSTEMS, add_coding_system_symbol_to_list,
+    CODING_ALIASES, CODING_SYSTEMS, add_coding_system_symbol_to_list, coding_alias_symbol,
     check_coding, coding_alias_group, coding_known, coding_mode_line, f_coding_system_plist,
 };
 use coding::{
