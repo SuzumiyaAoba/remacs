@@ -224,6 +224,18 @@ fn clear_host_clipboard(_app: &mut App) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 static GPUI_CAN_BECOME_KEY_ORIGINALS: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
 #[cfg(target_os = "macos")]
+struct UniquePasteboardRelease(id);
+
+#[cfg(target_os = "macos")]
+impl Drop for UniquePasteboardRelease {
+    fn drop(&mut self) {
+        unsafe {
+            let _: () = msg_send![self.0, releaseGlobally];
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
 static NO_ACCEPT_FOCUS_ASSOCIATED_KEY: u8 = 0;
 #[cfg(target_os = "windows")]
 static ORIGINAL_WINDOW_EX_STYLES: OnceLock<Mutex<HashMap<isize, i32>>> = OnceLock::new();
@@ -244,6 +256,7 @@ fn perform_ns_service(service: &str, send: Option<&str>) -> Result<Option<String
     if pasteboard == nil {
         return Err("Unable to create a service pasteboard".to_owned());
     }
+    let _pasteboard_release = UniquePasteboardRelease(pasteboard);
 
     let send_types =
         unsafe { NSArray::arrayWithObjects(nil, &[NSPasteboardTypeString, NSStringPboardType]) };
