@@ -44,8 +44,8 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
-    ShapedRun, SharedString, Size, SvgRenderer, SvgSize, SystemWindowTab, Task, TaskLabel, Window,
-    WindowControlArea, hash, point, px, size,
+    ShapedRun, SharedString, Size, SMOOTH_SVG_SCALE_FACTOR, SvgRenderer, SvgSize, SystemWindowTab,
+    Task, TaskLabel, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -2226,7 +2226,7 @@ impl Image {
             ImageFormat::Svg => {
                 let pixmap = svg_renderer.render_pixmap_with_svg_options(
                     &self.bytes,
-                    SvgSize::ScaleFactor(1.0),
+                    SvgSize::ScaleFactor(SMOOTH_SVG_SCALE_FACTOR),
                     base_uri,
                     css,
                 )?;
@@ -2239,7 +2239,11 @@ impl Image {
             }
         };
 
-        Ok(Arc::new(RenderImage::new(frames)))
+        let mut image = RenderImage::new(frames);
+        if self.format == ImageFormat::Svg {
+            image.scale_factor = SMOOTH_SVG_SCALE_FACTOR;
+        }
+        Ok(Arc::new(image))
     }
 
     /// Get the format of the clipboard image
