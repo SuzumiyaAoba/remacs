@@ -1859,6 +1859,7 @@ pub(super) struct EditorView {
     window_title: Option<String>,
     icon_name: Option<String>,
     window_icon_name: Option<String>,
+    native_outer_window_id: Option<u32>,
     pub(super) cols: usize,
     rows: usize,
     input: TextInputState,
@@ -1956,6 +1957,21 @@ impl EditorView {
             self.window_icon_name = None;
         }
         self.update_window_title(window);
+    }
+
+    pub(super) fn update_outer_window_id(&mut self, window: &Window) {
+        let (Some(_frame_id), Some(outer_window_id)) =
+            (self.tx.frame_id(), window.outer_window_id())
+        else {
+            return;
+        };
+        if self.native_outer_window_id == Some(outer_window_id) {
+            return;
+        }
+        self.native_outer_window_id = Some(outer_window_id);
+        let _ = self
+            .tx
+            .send(GuiEvent::FrameOuterWindowId { outer_window_id });
     }
 
     pub(super) fn share_picker_anchor(&self) -> Option<(f32, f32, f32)> {
@@ -2069,6 +2085,7 @@ impl EditorView {
             window_title: None,
             icon_name: None,
             window_icon_name: None,
+            native_outer_window_id: None,
             cols: 80,
             rows: 24,
             input: TextInputState::default(),
@@ -2129,6 +2146,7 @@ impl EditorView {
         self.native_minimum_size = None;
         self.icon_name = None;
         self.window_icon_name = None;
+        self.native_outer_window_id = None;
         self.mouse_face_position.set(None);
         self.geometry = None;
         self.runtime_frame_size = None;
@@ -2556,6 +2574,7 @@ impl EditorView {
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_client_frame_id(self.tx.frame_id());
+        self.update_outer_window_id(window);
         if !self.mouse_position_poll_started {
             self.mouse_position_poll_started = true;
             cx.spawn_in(window, async move |this, cx| {

@@ -1635,6 +1635,10 @@ impl PlatformWindow for X11Window {
         xcb_flush(&self.0.xcb);
     }
 
+    fn outer_window_id(&self) -> Option<u32> {
+        Some(self.0.x_window)
+    }
+
     fn set_app_id(&mut self, app_id: &str) {
         let mut data = Vec::with_capacity(app_id.len() * 2 + 1);
         data.extend(app_id.bytes()); // instance https://unix.stackexchange.com/a/494170

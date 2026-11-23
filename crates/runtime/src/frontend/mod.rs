@@ -653,6 +653,11 @@ pub enum InputEvent {
         left: i128,
         top: i128,
     },
+    /// Native X11 window ID for a graphical frame.
+    FrameOuterWindowId {
+        frame_id: usize,
+        outer_window_id: u32,
+    },
     /// Update the runtime's graphical glyph widths for one frame.
     FrameFontMetrics {
         frame_id: usize,
@@ -904,6 +909,10 @@ pub trait KeyIo {
     }
     /// Native frame position change consumed by a key-only nested loop.
     fn take_frame_moved(&mut self) -> Option<(usize, i128, i128)> {
+        None
+    }
+    /// Native X11 window ID reported for a graphical frame.
+    fn take_frame_outer_window_id(&mut self) -> Option<(usize, u32)> {
         None
     }
     /// Visibility change reported by the native window manager.

@@ -1057,6 +1057,7 @@ pub fn run_gui_with_dump(
                                 let initial_top = frame_top;
                                 let _ = handle.update(cx, move |view, window, cx| {
                                     view.set_frame_id(frame_id);
+                                    view.update_outer_window_id(window);
                                     view.set_image_cache_metrics(
                                         initial_image_cache_entries,
                                         initial_image_cache_size,
@@ -1199,6 +1200,7 @@ pub fn run_gui_with_dump(
                                         no_accept_focus,
                                     );
                                     view.set_icon_name(icon_name_for_window, window);
+                                    view.update_outer_window_id(window);
                                     view.set_minimum_cells(minimum_cells.0, minimum_cells.1);
                                     view.set_frame_drag_parameters(
                                         frame_drag_parameters.0,

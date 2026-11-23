@@ -1897,6 +1897,11 @@ impl Window {
         self.platform_window.set_icon_position(position);
     }
 
+    /// Returns the native X11 window ID when this platform exposes one.
+    pub fn outer_window_id(&self) -> Option<u32> {
+        self.platform_window.outer_window_id()
+    }
+
     /// Update the semantic contents exposed to assistive technology.
     pub fn set_accessibility_tree(&mut self, tree: accesskit::TreeUpdate) {
         #[cfg(target_os = "linux")]

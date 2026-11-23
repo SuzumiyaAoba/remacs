@@ -754,6 +754,10 @@ pub fn run_editor_with_shared<T: KeyIo + 'static>(
                     report_flow(i, flow);
                 }
             }
+            InputEvent::FrameOuterWindowId {
+                frame_id,
+                outer_window_id,
+            } => dispatch_frame_outer_window_id(i, frame_id, outer_window_id),
             InputEvent::FrameFontMetrics { frame_id, metrics } => {
                 i.frame_font_metrics.insert(frame_id, metrics);
             }
@@ -845,6 +849,10 @@ pub(super) fn apply_frame_selection<T: KeyIo>(
         if let Err(flow) = i.apply(&delete_frame, vec![Value::Frame(frame)]) {
             report_flow(i, flow);
         }
+    }
+
+    if let Some((frame_id, outer_window_id)) = term.borrow_mut().take_frame_outer_window_id() {
+        dispatch_frame_outer_window_id(i, frame_id, outer_window_id);
     }
 
     if term.borrow_mut().take_power_off_request() {
@@ -3368,6 +3376,30 @@ fn dispatch_frame_moved(
     Ok(())
 }
 
+fn dispatch_frame_outer_window_id(i: &mut Interp, frame_id: usize, outer_window_id: u32) {
+    let Some(frame) = i
+        .frames
+        .iter()
+        .find(|frame| frame.borrow().id == frame_id && !frame.borrow().dead)
+        .cloned()
+    else {
+        return;
+    };
+    let parameter = i.q("outer-window-id");
+    let mut parameters = frame.borrow().params.clone();
+    if crate::lisp::eval::plist_get(&parameters, parameter).int()
+        == Some(i128::from(outer_window_id))
+    {
+        return;
+    }
+    parameters = crate::lisp::eval::plist_put_front(
+        &parameters,
+        &Value::Sym(parameter),
+        Value::Int(i128::from(outer_window_id)),
+    );
+    frame.borrow_mut().params = parameters;
+}
+
 /// Insert text committed by the operating system without interpreting
 /// control characters such as newline and TAB as key bindings.
 fn hide_pointer_after_self_insert(i: &mut Interp) {
@@ -4166,6 +4198,10 @@ fn minibuf_loop<T: KeyIo>(
                 left,
                 top,
             } => dispatch_frame_moved(i, frame_id, left, top)?,
+            InputEvent::FrameOuterWindowId {
+                frame_id,
+                outer_window_id,
+            } => dispatch_frame_outer_window_id(i, frame_id, outer_window_id),
             InputEvent::FrameFontMetrics { frame_id, metrics } => {
                 i.frame_font_metrics.insert(frame_id, metrics);
             }

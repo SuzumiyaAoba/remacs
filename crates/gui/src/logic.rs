@@ -82,6 +82,9 @@ pub(super) enum GuiEvent {
         frame_id: usize,
         metrics: FrameFontMetrics,
     },
+    FrameOuterWindowId {
+        outer_window_id: u32,
+    },
     ColorDrop {
         position: Option<MousePosition>,
         color: String,
@@ -243,6 +246,7 @@ fn discardable_gui_input(event: &GuiEvent) -> bool {
         GuiEvent::NativeService { .. } => true,
         GuiEvent::FrameVisibility { .. }
         | GuiEvent::FrameFocus { .. }
+        | GuiEvent::FrameOuterWindowId { .. }
         | GuiEvent::SystemSleep { .. }
         | GuiEvent::FrameDeleteRequest { .. }
         | GuiEvent::FrameFontMetrics { .. }
@@ -2116,6 +2120,7 @@ pub(super) struct ChanIo {
     pending_frame_fullscreen: Option<(usize, Option<&'static str>)>,
     pending_frame_focus: Option<(usize, bool)>,
     pending_frame_moved: Option<(usize, i128, i128)>,
+    pending_frame_outer_window_id: Option<(usize, u32)>,
     pending_frame_delete: Option<usize>,
     pending_power_off: bool,
     last_blink_visible: Cell<Option<bool>>,
@@ -2746,6 +2751,7 @@ impl ChanIo {
             pending_frame_fullscreen: None,
             pending_frame_focus: None,
             pending_frame_moved: None,
+            pending_frame_outer_window_id: None,
             pending_frame_delete: None,
             pending_power_off: false,
             last_blink_visible: Cell::new(None),
@@ -3231,6 +3237,12 @@ impl KeyIo for ChanIo {
             GuiEvent::FrameFontMetrics { frame_id, metrics } => {
                 Ok(Some(InputEvent::FrameFontMetrics { frame_id, metrics }))
             }
+            GuiEvent::FrameOuterWindowId { outer_window_id } => Ok(self
+                .active_frame_id
+                .map(|frame_id| InputEvent::FrameOuterWindowId {
+                    frame_id,
+                    outer_window_id,
+                })),
             GuiEvent::ColorDrop {
                 position,
                 color,
@@ -3541,6 +3553,12 @@ impl KeyIo for ChanIo {
             }
             GuiEvent::FrameFontMetrics { frame_id, metrics } => {
                 self.pending_font_metrics.push_back((frame_id, metrics));
+                Ok(None)
+            }
+            GuiEvent::FrameOuterWindowId { outer_window_id } => {
+                if let Some(frame_id) = self.active_frame_id {
+                    self.pending_frame_outer_window_id = Some((frame_id, outer_window_id));
+                }
                 Ok(None)
             }
             GuiEvent::ColorDrop { .. } => Ok(None),
@@ -4075,6 +4093,10 @@ impl KeyIo for ChanIo {
 
     fn take_frame_moved(&mut self) -> Option<(usize, i128, i128)> {
         self.pending_frame_moved.take()
+    }
+
+    fn take_frame_outer_window_id(&mut self) -> Option<(usize, u32)> {
+        self.pending_frame_outer_window_id.take()
     }
 
     fn take_frame_visibility_update(&mut self) -> Option<(usize, FrameVisibility)> {
@@ -4822,6 +4844,7 @@ fn start_logic_inner(
                 pending_frame_fullscreen: None,
                 pending_frame_focus: None,
                 pending_frame_moved: None,
+                pending_frame_outer_window_id: None,
                 pending_frame_delete: None,
                 pending_power_off: false,
                 last_blink_visible: Cell::new(None),
