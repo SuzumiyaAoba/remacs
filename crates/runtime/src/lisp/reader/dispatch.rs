@@ -333,8 +333,12 @@ impl Reader<'_> {
                 // `#s(...)' — record object; `#s(hash-table ...)' reads
                 // a real hash table (GNU's printed-hash-table format).
                 self.pos += 2;
-                if self.peek()? != Some('(') {
-                    return Err(read_err_sym(self.interp, "#s "));
+                let next = self.peek()?;
+                if next != Some('(') {
+                    return Err(read_err_sym(
+                        self.interp,
+                        if next.is_none() { "#s" } else { "#s " },
+                    ));
                 }
                 self.pos += 1;
                 let items = self.read_seq_unannotated(')')?;
