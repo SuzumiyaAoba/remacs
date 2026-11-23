@@ -9327,6 +9327,23 @@ pub(crate) fn keymap_binding_for_map(
     key: &Value,
     own_only: bool,
 ) -> Result<Option<Value>, Flow> {
+    // String keys in menu maps are labels rather than key sequences.  They
+    // are still emitted by `map-keymap', so resolve their current definition
+    // from the live binding traversal instead of asking `key_seq_elt' for an
+    // event code.
+    if matches!(key, Value::Str(_)) {
+        let bindings = if own_only {
+            keymap_own_bindings(i, km)
+        } else {
+            keymap_all_bindings(i, km)
+        };
+        return Ok(bindings
+            .into_iter()
+            .find(|(candidate, _)| {
+                crate::lisp::builtins::eq_values_with_interp(i, candidate, key)
+            })
+            .map(|(_, definition)| definition));
+    }
     let range_start = match key {
         Value::Cons(cell) => {
             let binding = cell.borrow();
