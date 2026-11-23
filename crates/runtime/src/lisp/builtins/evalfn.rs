@@ -1093,6 +1093,26 @@ fn macroexpand_list_to_vec(i: &mut Interp, list: &Value) -> Result<Option<Vec<Va
     }
 }
 
+/// Return the improper atom at the end of LIST, if any. Circular spines use
+/// the caller's existing fallback behavior rather than being treated as a
+/// dotted tail.
+fn macroexpand_dotted_tail(i: &mut Interp, list: &Value) -> Result<Option<Value>, Flow> {
+    let mut tail = list.clone();
+    let mut seen = FxHashSet::default();
+    loop {
+        match tail {
+            Value::Nil => return Ok(None),
+            Value::Cons(cell) => {
+                if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                    return Ok(None);
+                }
+                tail = crate::lisp::eval::cons_parts(i, &cell)?.1;
+            }
+            atom => return Ok(Some(atom)),
+        }
+    }
+}
+
 /// Read and expand each cons cell as it is reached.  In particular, do not
 /// snapshot a scoped body before expanding its first form: a macro expander
 /// can mutate a later body cell, and GNU observes that mutation when it gets
@@ -1274,6 +1294,72 @@ fn macroexpand_cond_default_clause(i: &mut Interp, clause: &Value) -> Result<boo
     };
     let test = crate::lisp::eval::cons_parts(i, cell)?.0;
     macroexpand_cond_default_test(i, &test)
+}
+
+/// Expand `cond' clauses after GNU's pre-expansion scan for a default.
+/// A dotted tail errors during that scan unless a preceding default clause
+/// already makes the tail unreachable.
+fn macroexpand_all_cond(
+    i: &mut Interp,
+    original: &Value,
+    head: &Value,
+    clauses: &Value,
+) -> EvalResult {
+    let mut cursor = clauses.clone();
+    let mut prefix = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut default_tail = None;
+    loop {
+        match cursor.clone() {
+            Value::Nil => break,
+            Value::Cons(cell) => {
+                if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                    return macroexpand_live_form_spine(i, original, None);
+                }
+                let (clause, next) = crate::lisp::eval::cons_parts(i, &cell)?;
+                if !next.is_nil() && macroexpand_cond_default_clause(i, &clause)? {
+                    prefix.push(clause);
+                    default_tail = Some(next);
+                    break;
+                }
+                prefix.push(clause);
+                cursor = next;
+            }
+            atom => return Err(i.wrong_type_mut("listp", &atom)),
+        }
+    }
+
+    let clauses = if default_tail.is_some() {
+        Value::list(prefix)
+    } else {
+        clauses.clone()
+    };
+    let clauses = macroexpand_live_spine(i, &clauses, |i, clause| {
+        if let Value::Cons(_) = clause {
+            let expanded_clause = macroexpand_live_spine(i, clause, macroexpand_all_recur)?;
+            macroexpand_preserve_spine(i, clause, expanded_clause)
+        } else {
+            Ok(clause.clone())
+        }
+    })?;
+    let result = macroexpand_prepend_preserving(i, original, vec![head.clone()], clauses)?;
+    if let Some(default_tail) = default_tail {
+        let warn = i.q("macroexp-warn-and-return");
+        if i.fbound_p(warn) {
+            let suspicious = i.q("suspicious");
+            return i.apply(
+                &Value::Sym(warn),
+                vec![
+                    Value::string("Useless clause following default `cond' clause"),
+                    result,
+                    Value::list(vec![Value::Sym(suspicious), Value::Sym(sym::COND)]),
+                    Value::Sym(sym::T),
+                    default_tail,
+                ],
+            );
+        }
+    }
+    Ok(result)
 }
 
 /// Look up SYM_ID in ENV's `(:cl-symbol-macros . BINDINGS)' entry.
@@ -1590,6 +1676,9 @@ fn macroexpand_all_expanded(
             if i.sym_is(&car, sym::QUOTE) {
                 return Ok(expanded);
             }
+            if i.sym_is(&car, sym::COND) {
+                return macroexpand_all_cond(i, &expanded, &car, &cdr);
+            }
             // Rebuild with expanded elements; improper lists pass
             // through unexpanded rather than failing.  (Plain
             // `list_to_vec' — `want_list' builds a `listp' signal that
@@ -1729,6 +1818,11 @@ fn macroexpand_all_expanded(
                                 // would just re-wrap it in `function'.
                                 let head = 2;
                                 let Some(litems) = macroexpand_list_to_vec(i, &items[1])? else {
+                                    if let Some(tail) =
+                                        macroexpand_dotted_tail(i, &items[1])?
+                                    {
+                                        return Err(i.wrong_type_mut("listp", &tail));
+                                    }
                                     return Ok(expanded);
                                 };
                                 if litems.len() < head {
@@ -2192,69 +2286,6 @@ fn macroexpand_all_expanded(
                             vec![items[0].clone(), body],
                             cleanup,
                         );
-                    }
-                    sym::COND => {
-                        // GNU `macroexp--expand-all': `(cond CLAUSES...)'
-                        // first trims clauses after an unconditional
-                        // default, then runs `macroexp--all-clauses' (skip
-                        // 0) on the live clauses that remain.
-                        let original_clauses = macroexpand_list_tail(i, &expanded, 1)?;
-                        let mut clauses = original_clauses.clone();
-                        let mut default_tail = None;
-                        for clause_index in 0..items.len().saturating_sub(2) {
-                            let clause = &items[clause_index + 1];
-                            if macroexpand_cond_default_clause(i, clause)? {
-                                // GNU's `take' makes a fresh outer spine
-                                // when clauses after a default are removed.
-                                // Clause objects themselves stay shared, so
-                                // mutations within an earlier clause remain
-                                // visible during expansion.
-                                default_tail = Some(macroexpand_list_tail(
-                                    i,
-                                    &original_clauses,
-                                    clause_index + 1,
-                                )?);
-                                clauses = Value::list(items[1..=clause_index + 1].to_vec());
-                                break;
-                            }
-                        }
-                        let clauses = macroexpand_live_spine(i, &clauses, |i, clause| {
-                            if let Value::Cons(_) = clause {
-                                let expanded_clause =
-                                    macroexpand_live_spine(i, clause, macroexpand_all_recur)?;
-                                macroexpand_preserve_spine(i, clause, expanded_clause)
-                            } else {
-                                Ok(clause.clone())
-                            }
-                        })?;
-                        let result = macroexpand_prepend_preserving(
-                            i,
-                            &expanded,
-                            vec![items[0].clone()],
-                            clauses,
-                        )?;
-                        if let Some(default_tail) = default_tail {
-                            let warn = i.q("macroexp-warn-and-return");
-                            if i.fbound_p(warn) {
-                                let suspicious = i.q("suspicious");
-                                return i.apply(
-                                    &Value::Sym(warn),
-                                    vec![
-                                        Value::string(
-                                            "Useless clause following default `cond' clause",
-                                        ),
-                                        result,
-                                        Value::list(vec![
-                                            Value::Sym(suspicious),
-                                            Value::Sym(sym::COND),
-                                        ]),
-                                        Value::Sym(sym::T),
-                                        default_tail,
-                                    ],
-                                );
-                            }
-                        }
-                        return Ok(result);
                     }
                     _ => {}
                 }
