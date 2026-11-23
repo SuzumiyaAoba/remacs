@@ -144,14 +144,11 @@ impl Reader<'_> {
                         break;
                     }
                 }
-                // Skip N characters first. If the count itself consumes the
-                // separator, GNU ends this read instead of starting the next
-                // record.
+                // Skip N characters first, even when the count consumes a
+                // separator. Then skip through the next separator before
+                // reading the following form.
                 for _ in 0..n {
-                    let Some(c) = self.next()? else {
-                        return Err(eof_err(self.interp));
-                    };
-                    if c == '\u{1f}' {
+                    if self.next()?.is_none() {
                         return Err(eof_err(self.interp));
                     }
                 }
