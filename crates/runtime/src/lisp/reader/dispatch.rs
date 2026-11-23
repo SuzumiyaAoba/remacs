@@ -144,6 +144,12 @@ impl Reader<'_> {
                         break;
                     }
                 }
+                // GNU unreadchar returns the first non-digit when the count
+                // is zero; function streams expose that callback even though
+                // the character is immediately consumed again by the scan.
+                if n == 0 {
+                    self.unread_from(self.pos)?;
+                }
                 // Skip N characters first, even when the count consumes a
                 // separator. Then skip through the next separator before
                 // reading the following form.
