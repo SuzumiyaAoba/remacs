@@ -316,6 +316,89 @@ fn map_keymap_impl(i: &mut Interp, args: &[Value], own_only: bool) -> EvalResult
         crate::editor::keymap_all_bindings(i, &v)
     };
     let keys: Vec<Value> = pairs.into_iter().map(|(key, _)| key).collect();
+    let mut previous_to = None;
+    let mut ordered_nonoverlapping = true;
+    for key in &keys {
+        if let Some((from, to)) = map_keymap_numeric_range(key) {
+            if previous_to.is_some_and(|previous| from <= previous) {
+                ordered_nonoverlapping = false;
+                break;
+            }
+            previous_to = Some(to);
+        }
+    }
+    if ordered_nonoverlapping {
+        // Keep the initial numeric-key coverage, but recompute the partition
+        // and definition before each callback so splits and merges are seen.
+        enum KeymapEntry {
+            NumericRange(i128, i128),
+            Other(Value),
+        }
+        let mut entries = Vec::<KeymapEntry>::new();
+        for key in keys {
+            if let Some((from, to)) = map_keymap_numeric_range(&key) {
+                if let Some(KeymapEntry::NumericRange(_, last_to)) = entries.last_mut()
+                    && from >= *last_to
+                    && last_to.checked_add(1) == Some(from)
+                {
+                    *last_to = to;
+                } else {
+                    entries.push(KeymapEntry::NumericRange(from, to));
+                }
+            } else {
+                entries.push(KeymapEntry::Other(key));
+            }
+        }
+        let keymap_tag = i.q_soft("keymap");
+        for entry in entries {
+            match entry {
+                KeymapEntry::NumericRange(start, end) => {
+                    let mut cursor = start;
+                    while cursor <= end {
+                        let current = if own_only {
+                            crate::editor::keymap_own_bindings(i, &v)
+                        } else {
+                            crate::editor::keymap_all_bindings(i, &v)
+                        };
+                        let next = current.into_iter().find_map(|(key, definition)| {
+                            let (from, to) = map_keymap_numeric_range(&key)?;
+                            (to >= cursor && from <= end).then_some((from, to, definition))
+                        });
+                        let Some((from, to, definition)) = next else {
+                            break;
+                        };
+                        let from = from.max(cursor);
+                        let to = to.min(end);
+                        if from > to {
+                            break;
+                        }
+                        let key = if from == to {
+                            Value::Int(from)
+                        } else {
+                            Value::cons(Value::Int(from), Value::Int(to))
+                        };
+                        i.apply(&args[0], vec![key, definition])?;
+                        if to >= end {
+                            break;
+                        }
+                        cursor = to + 1;
+                    }
+                }
+                KeymapEntry::Other(key) => {
+                    if matches!(&key, Value::Sym(s) if Some(*s) == keymap_tag) {
+                        continue;
+                    }
+                    if let Some(definition) =
+                        crate::editor::keymap_binding_for_map(i, &v, &key, own_only)?
+                    {
+                        i.apply(&args[0], vec![key, definition])?;
+                    }
+                }
+            }
+        }
+        return Ok(Value::Nil);
+    }
+
     let keymap_tag = i.q_soft("keymap");
     for k in keys {
         if matches!(&k, Value::Sym(s) if Some(*s) == keymap_tag) {
@@ -328,6 +411,20 @@ fn map_keymap_impl(i: &mut Interp, args: &[Value], own_only: bool) -> EvalResult
         i.apply(&fnv, vec![k, def])?;
     }
     Ok(Value::Nil)
+}
+
+fn map_keymap_numeric_range(key: &Value) -> Option<(i128, i128)> {
+    match key {
+        Value::Int(code) => Some((*code, *code)),
+        Value::Cons(cell) => {
+            let cell = cell.borrow();
+            match (&cell.car, &cell.cdr) {
+                (Value::Int(from), Value::Int(to)) if from <= to => Some((*from, *to)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn f_map_keymap(i: &mut Interp, args: crate::lisp::Argv) -> EvalResult {
