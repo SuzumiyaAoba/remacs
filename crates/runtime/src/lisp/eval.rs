@@ -1649,11 +1649,9 @@ impl Interp {
 
     /// Evaluate a list of forms (a `progn`-style list, not a Vec).
     pub fn eval_progn(&mut self, forms: &Value) -> EvalResult {
-        // GNU evaluates each form before advancing through the body. Delay
-        // cycle detection until traversal reaches a repeated cell, so earlier
-        // side effects or errors win over a later cycle.
+        // GNU evaluates each form before advancing through the body and does
+        // not pre-scan for cycles. Earlier side effects or errors must win.
         self.maybe_quit()?;
-        let mut seen = FxHashSet::default();
         let mut until_quit = 4096usize;
         let mut last = Value::Nil;
         let mut cur = forms.clone();
@@ -1662,9 +1660,6 @@ impl Interp {
         // may replace its own list cells without changing the saved next
         // tail, while mutations to that next cell remain observable.
         while let Value::Cons(cell) = cur.clone() {
-            if !seen.insert(Rc::as_ptr(&cell) as usize) {
-                return Err(self.signal_data(sym::CIRCULAR_LIST, vec![cur.clone()]));
-            }
             let (form, next) = cons_parts(self, &cell)?;
             cur = next;
             let site = (Rc::as_ptr(&cell) as usize as u128) << 1;
@@ -2438,7 +2433,7 @@ mod progn_cycle_tests {
     use crate::lisp::obarray::Obarray;
 
     #[test]
-    fn circular_progn_body_evaluates_prefix_before_signaling_cycle() {
+    fn circular_progn_body_evaluates_prefix_before_later_error() {
         let mut interp = Interp::vacant();
         interp.obarray = Obarray::new();
         let side_effect = interp.intern("qa-circular-progn-side-effect");
@@ -2447,15 +2442,21 @@ mod progn_cycle_tests {
             Value::Sym(side_effect),
             Value::Sym(sym::T),
         ]);
-        let body = Value::cons(form, Value::Nil);
-        if let Value::Cons(cell) = &body {
+        let failure = Value::list(vec![
+            Value::Sym(interp.q("let")),
+            Value::list(vec![Value::list(vec![Value::Int(1), Value::Int(2)])]),
+            Value::Nil,
+        ]);
+        let second = Value::cons(failure, Value::Nil);
+        let body = Value::cons(form, second.clone());
+        if let Value::Cons(cell) = &second {
             cell.borrow_mut().cdr = body.clone();
         }
 
         let result = interp.eval_progn(&body);
         assert!(matches!(
             result,
-            Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::CIRCULAR_LIST)
+            Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::WRONG_TYPE_ARGUMENT)
         ));
         assert!(interp.symbol_value(side_effect).truthy());
     }
