@@ -21,7 +21,7 @@ use super::builtins::eq_values;
 use super::error::Flow;
 use super::eval::{ExcursionState, Interp, RestrictionState};
 use super::obarray::sym;
-use super::value::{Lambda, SymId, Value, lisp_char_code};
+use super::value::{Lambda, Value, lisp_char_code};
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 use std::cell::RefCell;
@@ -112,9 +112,9 @@ pub(crate) struct BcProg {
     /// For packed descriptors this is signed `argdesc >> 8', so an
     /// unbounded maximum can remain -1 although execution uses `max'.
     wna_max: i128,
-    dyn_names: Option<Rc<Vec<SymId>>>,
-    dyn_rest_index: Option<usize>,
-    invalid_argdesc_at: Option<usize>,
+    /// Original list argdesc; bindings walk its live cons spine because
+    /// variable watchers can mutate later formals.
+    dynamic_argdesc: Option<Value>,
 }
 
 /// Parsed call contract for a byte-code argument descriptor. `invalid_at`
@@ -130,8 +130,6 @@ pub(crate) struct ParsedArgDesc {
     /// field to the nonnegative execution/storage limit.
     pub reported_max: i128,
     pub has_rest: bool,
-    pub dyn_names: Option<Vec<SymId>>,
-    pub dyn_rest_index: Option<usize>,
     pub invalid_at: Option<usize>,
 }
 
@@ -264,9 +262,8 @@ pub(crate) fn exec(
                 uncallable: parsed_argdesc.uncallable,
                 has_rest: parsed_argdesc.has_rest,
                 wna_max,
-                dyn_names: parsed_argdesc.dyn_names.map(Rc::new),
-                dyn_rest_index: parsed_argdesc.dyn_rest_index,
-                invalid_argdesc_at: parsed_argdesc.invalid_at,
+                dynamic_argdesc: matches!(&argdesc, Value::Nil | Value::Cons(_))
+                    .then_some(argdesc.clone()),
             });
             *l.bc_prog.borrow_mut() = Some(p.clone());
             p
@@ -318,11 +315,151 @@ pub(crate) fn exec_raw(
         uncallable: argdesc.uncallable,
         has_rest: argdesc.has_rest,
         wna_max: 0,
-        dyn_names: argdesc.dyn_names.map(Rc::new),
-        dyn_rest_index: argdesc.dyn_rest_index,
-        invalid_argdesc_at: argdesc.invalid_at,
+        dynamic_argdesc: None,
     };
     run(i, &prog, bytestr, consts, &[], None, false, stack_depth)
+}
+
+fn dynamic_argdesc_wna(
+    i: &mut Interp,
+    who: Option<&Value>,
+    req: usize,
+    max: i128,
+    nargs: usize,
+) -> Flow {
+    let desc = who.cloned().unwrap_or_else(|| {
+        Value::cons(Value::Int(req as i128), Value::Int(max))
+    });
+    i.wrong_number_of_args(&desc, nargs as i128)
+}
+
+fn dynamic_argdesc_invalid_function(
+    i: &mut Interp,
+    who: Option<&Value>,
+    req: usize,
+    max: usize,
+) -> Flow {
+    let function = who.cloned().unwrap_or_else(|| {
+        Value::cons(Value::Int(req as i128), Value::Int(max as i128))
+    });
+    i.signal_data(sym::INVALID_FUNCTION, vec![function])
+}
+
+/// Bind list-form byte-code arguments in the same order GNU does. Read each
+/// cons cell's cdr after its variable watcher runs, so edits to later formals
+/// affect this call's remaining bindings and arity.
+fn bind_dynamic_argdesc(
+    i: &mut Interp,
+    argdesc: &Value,
+    argv: &[Value],
+    who: Option<&Value>,
+    initial_req: usize,
+    initial_max: i128,
+) -> Result<(), Flow> {
+    let optional = i.q("&optional");
+    let rest = i.q("&rest");
+    let mut cursor = argdesc.clone();
+    let mut seen = FxHashSet::default();
+    let mut req = 0usize;
+    let mut max = 0usize;
+    let mut arg_index = 0usize;
+    let mut optional_seen = false;
+    let mut rest_seen = false;
+    let mut rest_param_seen = false;
+
+    loop {
+        match cursor.clone() {
+            Value::Nil => {
+                if rest_seen && !rest_param_seen {
+                    return Err(dynamic_argdesc_invalid_function(i, who, req, max));
+                }
+                break;
+            }
+            Value::Cons(cell) => {
+                if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                    return Err(dynamic_argdesc_wna(
+                        i,
+                        who,
+                        initial_req,
+                        initial_max,
+                        argv.len(),
+                    ));
+                }
+                let formal = crate::lisp::eval::cons_parts(i, &cell)?.0;
+                let Some(name) = i.sym_id(&formal) else {
+                    return Err(dynamic_argdesc_invalid_function(i, who, req, max));
+                };
+                if name == optional {
+                    if optional_seen || rest_seen {
+                        return Err(dynamic_argdesc_invalid_function(i, who, req, max));
+                    }
+                    optional_seen = true;
+                    cursor = crate::lisp::eval::cons_parts(i, &cell)?.1;
+                    continue;
+                }
+                if name == rest {
+                    if rest_seen {
+                        return Err(dynamic_argdesc_invalid_function(i, who, req, max));
+                    }
+                    rest_seen = true;
+                    cursor = crate::lisp::eval::cons_parts(i, &cell)?.1;
+                    continue;
+                }
+
+                let value = if rest_seen {
+                    if rest_param_seen {
+                        Value::Nil
+                    } else {
+                        rest_param_seen = true;
+                        let values = Value::list(argv[arg_index..].to_vec());
+                        arg_index = argv.len();
+                        values
+                    }
+                } else if optional_seen {
+                    max += 1;
+                    if arg_index < argv.len() {
+                        let value = argv[arg_index].clone();
+                        arg_index += 1;
+                        value
+                    } else {
+                        Value::Nil
+                    }
+                } else {
+                    req += 1;
+                    max += 1;
+                    if arg_index < argv.len() {
+                        let value = argv[arg_index].clone();
+                        arg_index += 1;
+                        value
+                    } else {
+                        return Err(dynamic_argdesc_wna(
+                            i,
+                            who,
+                            initial_req,
+                            initial_max,
+                            argv.len(),
+                        ));
+                    }
+                };
+                i.specbind(name, value)?;
+                // Deliberately fetch the cdr after `specbind': watchers can
+                // replace it while binding this formal.
+                cursor = crate::lisp::eval::cons_parts(i, &cell)?.1;
+            }
+            _ => return Err(dynamic_argdesc_invalid_function(i, who, req, max)),
+        }
+    }
+
+    if !rest_seen && arg_index < argv.len() {
+        return Err(dynamic_argdesc_wna(
+            i,
+            who,
+            initial_req,
+            initial_max,
+            argv.len(),
+        ));
+    }
+    Ok(())
 }
 
 fn run(
@@ -341,14 +478,8 @@ fn run(
     if stack_depth > MAX_BYTECODE_STACK_SLOTS {
         return Err(i.error("Bytecode stack overflow"));
     }
-    let (req, max, uncallable, has_rest, dyn_names, dyn_rest_index) = (
-        prog.req,
-        prog.max,
-        prog.uncallable,
-        prog.has_rest,
-        prog.dyn_names.as_deref(),
-        prog.dyn_rest_index,
-    );
+    let (req, max, uncallable, has_rest) = (prog.req, prog.max, prog.uncallable, prog.has_rest);
+    let dynamic_argdesc = prog.dynamic_argdesc.as_ref();
     // GNU `funcall_subr' passes ALL supplied args to an n-adic subr
     // (`maxargs == MANY || maxargs > 8' -> `aMANY (numargs, args)');
     // the native trampoline then reads only its declared signature,
@@ -358,7 +489,7 @@ fn run(
     // funcall_subr passes all args to an aMANY trampoline).
     let short_argv: Vec<Value>;
     let argv =
-        if prog.invalid_argdesc_at.is_none()
+        if dynamic_argdesc.is_none()
             && !uncallable
             && named
             && !has_rest
@@ -370,31 +501,24 @@ fn run(
         } else {
             argv
         };
-    if argv.len() < req || uncallable {
-        // When the caller has no function datum, GNU's compiled macro
-        // expanders signal ((MIN . NONREST) NARGS). User-created byte-code
-        // functions pass their function object through `who'.
-        let desc = who
-            .cloned()
-            .unwrap_or_else(|| Value::cons(Value::Int(req as i128), Value::Int(prog.wna_max)));
-        return Err(i.wrong_number_of_args(&desc, argv.len() as i128));
+    if dynamic_argdesc.is_none() {
+        if argv.len() < req || uncallable {
+            // When the caller has no function datum, GNU's compiled macro
+            // expanders signal ((MIN . NONREST) NARGS). User-created byte-code
+            // functions pass their function object through `who'.
+            let desc = who
+                .cloned()
+                .unwrap_or_else(|| Value::cons(Value::Int(req as i128), Value::Int(prog.wna_max)));
+            return Err(i.wrong_number_of_args(&desc, argv.len() as i128));
+        }
+        if !has_rest && argv.len() > max {
+            let desc = who
+                .cloned()
+                .unwrap_or_else(|| Value::cons(Value::Int(req as i128), Value::Int(max as i128)));
+            return Err(i.wrong_number_of_args(&desc, argv.len() as i128));
+        }
     }
-    if prog
-        .invalid_argdesc_at
-        .is_some_and(|invalid_at| argv.len() >= invalid_at)
-    {
-        let function = who
-            .cloned()
-            .unwrap_or_else(|| Value::cons(Value::Int(req as i128), Value::Int(max as i128)));
-        return Err(i.signal_data(sym::INVALID_FUNCTION, vec![function]));
-    }
-    if !has_rest && argv.len() > max {
-        let desc = who
-            .cloned()
-            .unwrap_or_else(|| Value::cons(Value::Int(req as i128), Value::Int(max as i128)));
-        return Err(i.wrong_number_of_args(&desc, argv.len() as i128));
-    }
-    let stack_slots = if dyn_names.is_none() {
+    let stack_slots = if dynamic_argdesc.is_none() {
         let Some(stack_slots) = max.checked_add(has_rest as usize) else {
             return Err(i.error("Invalid byte-code"));
         };
@@ -406,37 +530,16 @@ fn run(
         0
     };
     let specmark = i.specbind_depth();
-    // Dynamic-style argdesc (a list of names): each parameter name is
-    // specbind'd to its argument — GNU binds them in order, &rest
-    // takes the tail as a list.
-    if let Some(names) = dyn_names {
-        let mut arg_index = 0usize;
-        for (index, name) in names.iter().enumerate() {
-            let v = if dyn_rest_index == Some(index) {
-                let rest = Value::list(argv[arg_index..].to_vec());
-                arg_index = argv.len();
-                rest
-            } else if dyn_rest_index.is_some_and(|rest_index| index > rest_index) {
-                // Names following &rest remain bound, but receive nil once
-                // the rest parameter has consumed the argument tail.
-                Value::Nil
-            } else if arg_index < argv.len() {
-                let value = argv[arg_index].clone();
-                arg_index += 1;
-                value
-            } else {
-                Value::Nil
-            };
-            if let Err(flow) = i.specbind(*name, v) {
-                let flow = offer_exit(i, flow);
-                return finish_bindings(i, specmark, Err(flow));
-            }
+    if let Some(argdesc) = dynamic_argdesc {
+        if let Err(flow) = bind_dynamic_argdesc(i, argdesc, argv, who, req, prog.wna_max) {
+            let flow = offer_exit(i, flow);
+            return finish_bindings(i, specmark, Err(flow));
         }
     }
     // Lexical argdesc: the args sit on the value stack (first arg
     // deepest, last on top).  Dynamic code leaves the stack empty and
     // reaches args through varref on the specbinds above.
-    let stack: Vec<Value> = if dyn_names.is_none() {
+    let stack: Vec<Value> = if dynamic_argdesc.is_none() {
         let mut s = Vec::with_capacity(stack_slots);
         let pushed = argv.len().min(max);
         s.extend(argv[..pushed].iter().cloned());
@@ -702,7 +805,7 @@ enum Step {
 /// Argument-description decode.  Integer argdesc packs
 /// `required | (&rest << 7) | ((required+optional) << 8)'; a list is
 /// the literal (dynamic-binding) arglist; nil means zero arguments.
-/// Returns (required, max-positional, has-rest, dynamic-names).
+/// Returns the reported arity and callability information.
 pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
     match a {
         Value::Int(n) => {
@@ -721,8 +824,6 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
                 uncallable,
                 reported_max: packed_max,
                 has_rest: rest,
-                dyn_names: None,
-                dyn_rest_index: None,
                 invalid_at: None,
             }
         }
@@ -732,8 +833,6 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
             uncallable: false,
             reported_max: 0,
             has_rest: false,
-            dyn_names: Some(Vec::new()),
-            dyn_rest_index: None,
             invalid_at: None,
         },
         Value::Cons(_) => {
@@ -748,8 +847,6 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
                     uncallable: false,
                     reported_max: 0,
                     has_rest: false,
-                    dyn_names: Some(Vec::new()),
-                    dyn_rest_index: None,
                     invalid_at: None,
                 };
             }
@@ -757,11 +854,10 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
             let rst = i.q("&rest");
             let mut req = 0usize;
             let mut max = 0usize;
-            let mut names = Vec::new();
             let mut mode = 0u8; // 0 required, 1 optional, 2 after &rest
             let mut optional_seen = false;
             let mut rest_seen = false;
-            let mut rest_index = None;
+            let mut rest_param_seen = false;
             let mut invalid_at = None;
             let mut cur = a.clone();
             while let Value::Cons(c) = cur.clone() {
@@ -790,11 +886,10 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
                         rest_seen = true;
                         mode = 2;
                     }
-                    Some(s) => {
-                        if mode == 2 && rest_index.is_none() {
-                            rest_index = Some(names.len());
+                    Some(_) => {
+                        if mode == 2 && !rest_param_seen {
+                            rest_param_seen = true;
                         }
-                        names.push(s);
                         match mode {
                             0 => {
                                 req += 1;
@@ -815,7 +910,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
                 // prefix has had a chance to produce its WNA error.
                 invalid_at = Some(req);
             }
-            if rest_seen && rest_index.is_none() {
+            if rest_seen && !rest_param_seen {
                 invalid_at.get_or_insert(req);
             }
             ParsedArgDesc {
@@ -823,9 +918,7 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
                 max,
                 uncallable: false,
                 reported_max: max as i128,
-                has_rest: rest_index.is_some(),
-                dyn_names: Some(names),
-                dyn_rest_index: rest_index,
+                has_rest: rest_param_seen,
                 invalid_at,
             }
         }
@@ -835,8 +928,6 @@ pub(crate) fn parse_argdesc(i: &mut Interp, a: &Value) -> ParsedArgDesc {
             uncallable: false,
             reported_max: 0,
             has_rest: false,
-            dyn_names: None,
-            dyn_rest_index: None,
             invalid_at: Some(0),
         },
     }
