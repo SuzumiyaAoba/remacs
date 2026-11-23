@@ -72,12 +72,32 @@ use dialog_items::dialog_prompt_items;
 use dialogs::dialog_prompt_buttons;
 use dialogs::dialog_prompt_level;
 use logic::{
-    ClipboardRequest, ClipboardTarget, FramePosition, FrameSizeSpec, FrameSnapshot, GuiEvent,
-    GuiRequest, start_logic_with_native_window,
+    ClipboardRequest, ClipboardTarget, FrameIconType, FramePosition, FrameSizeSpec, FrameSnapshot,
+    GuiEvent, GuiRequest, start_logic_with_native_window,
 };
 use view::{EditorView, build_managed_editor_view};
 
 const MIN_FRAME_COLUMNS: usize = 10;
+const DEFAULT_FRAME_ICON_PNG: &[u8] =
+    include_bytes!("../../../etc/images/icons/hicolor/32x32/apps/emacs.png");
+
+fn native_frame_icon(icon_type: Option<&FrameIconType>) -> Option<WindowIcon> {
+    match icon_type {
+        None => None,
+        Some(FrameIconType::Default) => Some(WindowIcon::Png(DEFAULT_FRAME_ICON_PNG.to_vec())),
+        Some(FrameIconType::Bitmap(path)) => {
+            let path = if let Some(relative) = path.strip_prefix("~/") {
+                std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .map(|home| home.join(relative))
+                    .unwrap_or_else(|| std::path::PathBuf::from(path))
+            } else {
+                std::path::PathBuf::from(path)
+            };
+            std::fs::read(path).ok().map(WindowIcon::Xbm)
+        }
+    }
+}
 
 fn read_host_selection(app: &App, target: ClipboardTarget) -> Result<Option<String>, String> {
     let item = match target {
@@ -718,6 +738,7 @@ pub fn run_gui_with_dump(
             let mut frame_parents = HashMap::<usize, Option<usize>>::new();
             let mut frame_keep_ratios = HashMap::<usize, ChildFrameKeepRatioState>::new();
             let mut window_modes = HashMap::<usize, Option<String>>::new();
+            let mut window_icon_types = HashMap::<usize, Option<FrameIconType>>::new();
             let mut window_icon_positions = HashMap::<usize, Option<(i32, i32)>>::new();
             let mut frame_behaviors = HashMap::<usize, (bool, bool, Option<String>, bool)>::new();
             let mut frame_focus_on_map = HashMap::<usize, bool>::new();
@@ -745,6 +766,7 @@ pub fn run_gui_with_dump(
                             .retain(|frame_id, _| live_frames.contains(frame_id));
                         pending_frame_orders.retain(|frame_id, _| live_frames.contains(frame_id));
                         frame_keep_ratios.retain(|frame_id, _| live_frames.contains(frame_id));
+                        window_icon_types.retain(|frame_id, _| live_frames.contains(frame_id));
                         window_icon_positions.retain(|frame_id, _| live_frames.contains(frame_id));
                         let snapshots = frame_snapshots_parent_first(snapshots);
                         let mut native_window_changed = HashSet::new();
@@ -770,6 +792,9 @@ pub fn run_gui_with_dump(
                                 None => icon_position.is_some(),
                             };
                             window_icon_positions.insert(frame_id, icon_position);
+                            let update_icon_type =
+                                window_icon_types.get(&frame_id) != Some(&snapshot.icon_type);
+                            window_icon_types.insert(frame_id, snapshot.icon_type.clone());
                             let image_cache_entries = snapshot.image_cache_entries.clone();
                             let image_cache_size = snapshot.image_cache_size.clone();
                             let modifier_mapping = snapshot.modifier_mapping;
@@ -881,6 +906,7 @@ pub fn run_gui_with_dump(
                                 let requested_behavior = behavior.clone();
                                 let requested_represented_file = represented_file.clone();
                                 let requested_icon_name = snapshot.icon_name.clone();
+                                let requested_icon_type = snapshot.icon_type.clone();
                                 let requested_icon_position = icon_position;
                                 let child_bounds = handle.update(cx, move |view, window, cx| {
                                     view.set_image_cache_metrics(
@@ -933,6 +959,11 @@ pub fn run_gui_with_dump(
                                     view.set_icon_name(requested_icon_name, window);
                                     if update_icon_position {
                                         window.set_icon_position(requested_icon_position);
+                                    }
+                                    if update_icon_type {
+                                        window.set_icon(native_frame_icon(
+                                            requested_icon_type.as_ref(),
+                                        ));
                                     }
                                     window.set_opacity(frame_opacity(
                                         alpha_active,
@@ -1048,6 +1079,8 @@ pub fn run_gui_with_dump(
                                 let initial_represented_file = represented_file.clone();
                                 let represented_file_for_window = represented_file.clone();
                                 let initial_icon_name = snapshot.icon_name.clone();
+                                let initial_icon_type = snapshot.icon_type.clone();
+                                let update_initial_icon_type = update_icon_type;
                                 let initial_icon_position = icon_position;
                                 let update_initial_icon_position = update_icon_position;
                                 let initial_titlebar_appearance = titlebar_appearance;
@@ -1071,6 +1104,11 @@ pub fn run_gui_with_dump(
                                     view.set_icon_name(initial_icon_name, window);
                                     if update_initial_icon_position {
                                         window.set_icon_position(initial_icon_position);
+                                    }
+                                    if update_initial_icon_type {
+                                        window.set_icon(native_frame_icon(
+                                            initial_icon_type.as_ref(),
+                                        ));
                                     }
                                     view.set_modifier_mapping(initial_modifier_mapping);
                                     view.set_internal_border_width(initial_internal_border_width);
@@ -1158,6 +1196,7 @@ pub fn run_gui_with_dump(
                             let represented_file = snapshot.represented_file.clone();
                             let represented_file_for_window = represented_file.clone();
                             let icon_name_for_window = snapshot.icon_name.clone();
+                            let icon_type_for_window = snapshot.icon_type.clone();
                             let icon_position_for_window = icon_position;
                             let titlebar_appearance = (
                                 snapshot.parent_frame.is_none() && !snapshot.undecorated,
@@ -1184,6 +1223,7 @@ pub fn run_gui_with_dump(
                                 );
                                 window.set_window_appearance(ns_appearance);
                                 window.set_represented_file(represented_file_for_window);
+                                window.set_icon(native_frame_icon(icon_type_for_window.as_ref()));
                                 if let Some(position) = icon_position_for_window {
                                     window.set_icon_position(Some(position));
                                 }
@@ -1282,6 +1322,7 @@ pub fn run_gui_with_dump(
                             window_modes.remove(&frame_id);
                             frame_parents.remove(&frame_id);
                             frame_keep_ratios.remove(&frame_id);
+                            window_icon_types.remove(&frame_id);
                             window_icon_positions.remove(&frame_id);
                             frame_behaviors.remove(&frame_id);
                             frame_focus_on_map.remove(&frame_id);

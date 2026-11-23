@@ -21,7 +21,8 @@ use crate::{
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextDropEvent, TextStyle,
     TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    WindowBounds, WindowControls, WindowDecorations, WindowIcon, WindowOptions, WindowParams,
+    WindowTextSystem,
     point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -1895,6 +1896,11 @@ impl Window {
     /// Updates the requested icon position when supported by the window manager.
     pub fn set_icon_position(&mut self, position: Option<(i32, i32)>) {
         self.platform_window.set_icon_position(position);
+    }
+
+    /// Updates the native window icon when supported.
+    pub fn set_icon(&mut self, icon: Option<WindowIcon>) {
+        self.platform_window.set_icon(icon);
     }
 
     /// Returns the native X11 window ID when this platform exposes one.

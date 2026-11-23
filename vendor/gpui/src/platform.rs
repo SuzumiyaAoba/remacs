@@ -590,6 +590,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_title(&mut self, title: &str);
     fn set_icon_name(&mut self, _icon_name: &str) {}
     fn set_icon_position(&mut self, _position: Option<(i32, i32)>) {}
+    fn set_icon(&mut self, _icon: Option<WindowIcon>) {}
     fn outer_window_id(&self) -> Option<u32> {
         None
     }
@@ -1247,6 +1248,15 @@ pub trait InputHandler: 'static {
     fn apple_press_and_hold_enabled(&mut self) -> bool {
         true
     }
+}
+
+/// Image data used for the native X11 window icon.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WindowIcon {
+    /// Encoded PNG image data.
+    Png(Vec<u8>),
+    /// XBM source file data.
+    Xbm(Vec<u8>),
 }
 
 /// The variables that can be configured when creating a new window

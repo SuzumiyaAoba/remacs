@@ -7,7 +7,7 @@ use crate::{
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, X11ClientStatePtr, px, size,
+    WindowDecorations, WindowIcon, WindowKind, WindowParams, X11ClientStatePtr, px, size,
 };
 
 use blade_graphics as gpu;
@@ -61,6 +61,7 @@ x11rb::atom_manager! {
         _NET_WM_PID,
         _NET_WM_NAME,
         _NET_WM_ICON_NAME,
+        _NET_WM_ICON,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
@@ -85,6 +86,118 @@ x11rb::atom_manager! {
         _GTK_EDGE_CONSTRAINTS,
         _NET_CLIENT_LIST_STACKING,
     }
+}
+
+fn xbm_icon_pixels(bytes: &[u8]) -> Option<(u32, u32, Vec<u32>)> {
+    let source = std::str::from_utf8(bytes).ok()?;
+    let mut width = None;
+    let mut height = None;
+    for line in source.lines() {
+        let mut words = line.split_whitespace();
+        if words.next() != Some("#define") {
+            continue;
+        }
+        let (Some(name), Some(value)) = (words.next(), words.next()) else {
+            continue;
+        };
+        let value = value.parse::<u32>().ok()?;
+        if name.ends_with("_width") {
+            width = Some(value);
+        } else if name.ends_with("_height") {
+            height = Some(value);
+        }
+    }
+    let width = width?;
+    let height = height?;
+    if width == 0 || height == 0 || width > 128 || height > 128 {
+        return None;
+    }
+
+    let bits_start = source.find("_bits")?;
+    let declaration_start = source[..bits_start].rfind("static")?;
+    let array_start = bits_start + source[bits_start..].find('{')? + 1;
+    let array_end = array_start + source[array_start..].find('}')?;
+    let unit_bits = if source[declaration_start..array_start].contains("short") {
+        16
+    } else {
+        8
+    };
+    let units_per_row = width.div_ceil(unit_bits);
+    let body = source[array_start..array_end]
+        .lines()
+        .map(|line| line.split("/*").next().unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let values = body
+        .split(',')
+        .filter_map(|value| {
+            let value = value.trim();
+            if value.is_empty() {
+                return None;
+            }
+            let parsed = if let Some(value) = value
+                .strip_prefix("0x")
+                .or_else(|| value.strip_prefix("0X"))
+            {
+                u16::from_str_radix(value, 16).ok()?
+            } else if let Some(value) = value
+                .strip_prefix("-0x")
+                .or_else(|| value.strip_prefix("-0X"))
+            {
+                (-(i32::from_str_radix(value, 16).ok()?)) as u16
+            } else {
+                value.parse::<i32>().ok()? as u16
+            };
+            Some(parsed)
+        })
+        .collect::<Vec<_>>();
+    if values.len() < units_per_row.saturating_mul(height) as usize {
+        return None;
+    }
+
+    let mut pixels = Vec::with_capacity(width.saturating_mul(height) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let value = values[(y * units_per_row + x / unit_bits) as usize];
+            let set = value & (1 << (x % unit_bits)) != 0;
+            pixels.push(if set { 0xff00_0000 } else { 0 });
+        }
+    }
+    Some((width, height, pixels))
+}
+
+fn png_icon_pixels(bytes: &[u8]) -> Option<(u32, u32, Vec<u32>)> {
+    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+        .ok()?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 || width > 128 || height > 128 {
+        return None;
+    }
+    let pixels = image
+        .pixels()
+        .map(|pixel| {
+            let [red, green, blue, alpha] = pixel.0;
+            (u32::from(alpha) << 24)
+                | (u32::from(red) << 16)
+                | (u32::from(green) << 8)
+                | u32::from(blue)
+        })
+        .collect();
+    Some((width, height, pixels))
+}
+
+fn net_wm_icon_data(icon: WindowIcon) -> Option<Vec<u32>> {
+    let (width, height, pixels) = match icon {
+        WindowIcon::Png(bytes) => png_icon_pixels(&bytes)?,
+        WindowIcon::Xbm(bytes) => xbm_icon_pixels(&bytes)?,
+    };
+    (pixels.len() == width.saturating_mul(height) as usize).then(|| {
+        let mut data = Vec::with_capacity(pixels.len() + 2);
+        data.extend([width, height]);
+        data.extend(pixels);
+        data
+    })
 }
 
 fn query_render_extent(
@@ -1632,6 +1745,35 @@ impl PlatformWindow for X11Window {
             hints.set(&self.0.xcb, self.0.x_window),
         )
         .log_err();
+        xcb_flush(&self.0.xcb);
+    }
+
+    fn set_icon(&mut self, icon: Option<WindowIcon>) {
+        if let Some(icon) = icon {
+            let Some(data) = net_wm_icon_data(icon) else {
+                log::warn!("Ignoring an unsupported X11 window icon image");
+                return;
+            };
+            check_reply(
+                || "X11 ChangeProperty32 for _NET_WM_ICON failed.",
+                self.0.xcb.change_property32(
+                    xproto::PropMode::REPLACE,
+                    self.0.x_window,
+                    self.0.state.borrow().atoms._NET_WM_ICON,
+                    xproto::AtomEnum::CARDINAL,
+                    &data,
+                ),
+            )
+            .log_err();
+        } else {
+            check_reply(
+                || "X11 DeleteProperty for _NET_WM_ICON failed.",
+                self.0
+                    .xcb
+                    .delete_property(self.0.x_window, self.0.state.borrow().atoms._NET_WM_ICON),
+            )
+            .log_err();
+        }
         xcb_flush(&self.0.xcb);
     }
 

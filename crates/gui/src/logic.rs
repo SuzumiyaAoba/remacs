@@ -576,6 +576,7 @@ pub(super) struct FrameSnapshot {
     pub image_cache_size: Arc<AtomicUsize>,
     pub name: String,
     pub icon_name: Option<String>,
+    pub icon_type: Option<FrameIconType>,
     pub icon_left: Option<i128>,
     pub icon_top: Option<i128>,
     pub parent_frame: Option<usize>,
@@ -617,6 +618,12 @@ pub(super) struct FrameSnapshot {
     pub grid: Grid,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum FrameIconType {
+    Default,
+    Bitmap(String),
+}
+
 fn frame_snapshot(
     i: &Interp,
     frame: &remacs_runtime::editor::FrameRef,
@@ -656,6 +663,11 @@ fn frame_snapshot(
         icon_name: match frame_parameter_value(i, frame, "icon-name") {
             Value::Str(icon_name) => Some(icon_name.borrow().to_unicode_lossy()),
             _ => None,
+        },
+        icon_type: match frame_parameter_value(i, frame, "icon-type") {
+            Value::Nil => None,
+            Value::Str(path) => Some(FrameIconType::Bitmap(path.borrow().to_unicode_lossy())),
+            _ => Some(FrameIconType::Default),
         },
         icon_left: int_param("icon-left"),
         icon_top: int_param("icon-top"),
