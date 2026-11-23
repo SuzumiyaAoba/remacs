@@ -501,6 +501,16 @@ pub(crate) fn handle_connection_error(err: ConnectionError) -> anyhow::Error {
     }
 }
 
+fn minimum_size_hint_in_device_pixels(
+    size: Size<Pixels>,
+    scale_factor: f32,
+) -> (i32, i32) {
+    (
+        (size.width.0 * scale_factor).max(0.0).ceil() as i32,
+        (size.height.0 * scale_factor).max(0.0).ceil() as i32,
+    )
+}
+
 impl X11WindowState {
     pub fn new(
         handle: AnyWindowHandle,
@@ -636,7 +646,7 @@ impl X11WindowState {
                 ));
             }
             if let Some(size) = params.window_min_size {
-                let min_size = (size.width.0 as i32, size.height.0 as i32);
+                let min_size = minimum_size_hint_in_device_pixels(size, scale_factor);
                 size_hints.min_size = Some(min_size);
             }
             if size_hints.position.is_some()
@@ -1429,12 +1439,7 @@ impl PlatformWindow for X11Window {
                 return;
             }
         };
-        hints.min_size = size.map(|size| {
-            (
-                (size.width.0 * scale_factor).max(0.0).ceil() as i32,
-                (size.height.0 * scale_factor).max(0.0).ceil() as i32,
-            )
-        });
+        hints.min_size = size.map(|size| minimum_size_hint_in_device_pixels(size, scale_factor));
         check_reply(
             || "X11 setting minimum size failed.",
             hints.set_normal_hints(self.0.xcb.as_ref(), self.0.x_window),
