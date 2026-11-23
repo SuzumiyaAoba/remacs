@@ -1027,6 +1027,9 @@ fn unfold_funcall_lambda(
     let body = &litems[body_start..];
     if bindings.is_empty() {
         // `(macroexp-progn body)'
+        if body.is_empty() {
+            return Ok(Some(Value::Nil));
+        }
         if body.len() == 1 {
             return Ok(Some(body[0].clone()));
         }
