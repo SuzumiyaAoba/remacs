@@ -1649,25 +1649,12 @@ impl Interp {
 
     /// Evaluate a list of forms (a `progn`-style list, not a Vec).
     pub fn eval_progn(&mut self, forms: &Value) -> EvalResult {
-        // GNU validates the whole body spine before evaluating any form.
-        // Keep the live walk's own set as a form can mutate a previously
-        // acyclic body into a cycle while evaluation is in progress.
+        // GNU evaluates each form before advancing through the body. Delay
+        // cycle detection until traversal reaches a repeated cell, so earlier
+        // side effects or errors win over a later cycle.
         self.maybe_quit()?;
         let mut seen = FxHashSet::default();
-        let mut scan = forms.clone();
         let mut until_quit = 4096usize;
-        while let Value::Cons(cell) = scan.clone() {
-            if !seen.insert(Rc::as_ptr(&cell) as usize) {
-                return Err(self.signal_data(sym::CIRCULAR_LIST, vec![scan.clone()]));
-            }
-            scan = cons_cdr(self, &cell)?;
-            until_quit -= 1;
-            if until_quit == 0 {
-                self.maybe_quit()?;
-                until_quit = 4096;
-            }
-        }
-        seen.clear();
         let mut last = Value::Nil;
         let mut cur = forms.clone();
         until_quit = 4096;
@@ -2451,7 +2438,7 @@ mod progn_cycle_tests {
     use crate::lisp::obarray::Obarray;
 
     #[test]
-    fn circular_progn_body_signals_before_evaluating_its_forms() {
+    fn circular_progn_body_evaluates_prefix_before_signaling_cycle() {
         let mut interp = Interp::vacant();
         interp.obarray = Obarray::new();
         let side_effect = interp.intern("qa-circular-progn-side-effect");
@@ -2470,7 +2457,7 @@ mod progn_cycle_tests {
             result,
             Err(Flow::Signal(ref signal)) if signal.is_symbol(sym::CIRCULAR_LIST)
         ));
-        assert!(matches!(interp.symbol_value(side_effect), Value::Sym(id) if id == sym::UNBOUND));
+        assert!(interp.symbol_value(side_effect).truthy());
     }
 }
 
