@@ -7445,6 +7445,41 @@ fn automatic_frame_name(name: &EmacsStr) -> bool {
     name.starts_with('F') && name.len() > 1 && name[1..].chars().all(|b| b.is_ascii_digit())
 }
 
+fn validate_frame_alpha_component(i: &mut Interp, value: &Value) -> Result<(), Flow> {
+    match value {
+        Value::Nil => Ok(()),
+        Value::Int(value) if (0..=100).contains(value) => Ok(()),
+        Value::Int(_) => Err(i.signal_data(
+            sym::ARGS_OUT_OF_RANGE,
+            vec![Value::Int(0), Value::Int(100)],
+        )),
+        Value::Float(value) if value.is_finite() && (0.0..=1.0).contains(&**value) => Ok(()),
+        Value::Float(_) => Err(i.signal_data(
+            sym::ARGS_OUT_OF_RANGE,
+            vec![Value::float(0.0), Value::float(1.0)],
+        )),
+        other => Err(i.wrong_type_mut("numberp", other)),
+    }
+}
+
+fn validate_frame_alpha(i: &mut Interp, value: &Value) -> Result<(), Flow> {
+    let mut rest = value.clone();
+    for _ in 0..2 {
+        let (item, next) = match &rest {
+            Value::Cons(cons) => {
+                let cons = cons.borrow();
+                (cons.car.clone(), Some(cons.cdr.clone()))
+            }
+            _ => (rest.clone(), None),
+        };
+        validate_frame_alpha_component(i, &item)?;
+        if let Some(next) = next {
+            rest = next;
+        }
+    }
+    Ok(())
+}
+
 fn store_frame_parameter(
     i: &mut Interp,
     f: &FrameRef,
@@ -7461,7 +7496,16 @@ fn store_frame_parameter(
     let width_parameter = i.q("width");
     let height_parameter = i.q("height");
     let cursor_color_parameter = i.q("cursor-color");
+    let alpha_parameter = i.q("alpha");
+    let alpha_background_parameter = i.q("alpha-background");
     let key = ps.map(|ps| i.sym(ps)).unwrap_or(key);
+    if frame_is_graphical(i, f) {
+        if ps == Some(alpha_parameter) {
+            validate_frame_alpha(i, &value)?;
+        } else if ps == Some(alpha_background_parameter) {
+            validate_frame_alpha_component(i, &value)?;
+        }
+    }
     if ps == Some(font_parameter) && !frame_is_graphical(i, f) {
         // A tty has no font resource to update; keep reporting its actual
         // fixed font even when callers supply arbitrary font parameters.
