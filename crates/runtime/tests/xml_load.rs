@@ -2,6 +2,7 @@ use remacs_runtime::lisp::{Flow, Interp};
 
 const CASES: &str = r#"
 (progn
+  (setq hack-read-symbol-shorthands-function nil)
   (require 'xml)
   (dolist (name '(xml--parse-buffer xml--parse-processing-instruction
                   xml-parse-tag-1 xml--check-entity-recursion xml-parse-string
@@ -38,6 +39,18 @@ const CASES: &str = r#"
     (unless (condition-case nil (progn (remacs-test-xml-parse text) nil)
               (error t))
       (error "Malformed XML was accepted: %S" text)))
+  (let* ((text (concat "<!DOCTYPE root [\n"
+                       "<?xml-stylesheet href=\"style.xsl\"?>\n"
+                       "<!NOTATION gif SYSTEM \"image>gif\">\n"
+                       "<!NOTATION text PUBLIC \"-//EXAMPLE//TEXT\">\n"
+                       "<!ELEMENT root EMPTY>\n]><root/>"))
+         (parsed (with-temp-buffer
+                   (insert text)
+                   (xml-parse-region nil nil nil t))))
+    (unless (and (eq (caar parsed) 'dtd)
+                 (equal (cadar parsed) "root")
+                 (eq (xml-node-name (cadr parsed)) 'root))
+      (error "DTD PI/NOTATION declarations were not parsed: %S" parsed)))
   (let ((xml-entity-alist '(("a" . "&b;&b;") ("b" . "B"))))
     (unless (member "b" (xml--check-entity-recursion "a"))
       (error "Entity traversal did not return the visited names")))
@@ -50,14 +63,21 @@ const CASES: &str = r#"
 
 #[test]
 fn xml_load_installs_independent_definitions_and_parses_documents() {
-    let mut interp = Interp::new();
-    match interp.eval_str(CASES) {
-        Ok(result) => assert!(result.truthy()),
-        Err(Flow::Signal(signal)) => panic!(
-            "{} {}",
-            interp.prin1_to_string(&signal.symbol()),
-            interp.prin1_to_string(&signal.data())
-        ),
-        Err(other) => panic!("{other:?}"),
-    }
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let mut interp = Interp::new();
+            match interp.eval_str(CASES) {
+                Ok(result) => assert!(result.truthy()),
+                Err(Flow::Signal(signal)) => panic!(
+                    "{} {}",
+                    interp.prin1_to_string(&signal.symbol()),
+                    interp.prin1_to_string(&signal.data())
+                ),
+                Err(other) => panic!("{other:?}"),
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

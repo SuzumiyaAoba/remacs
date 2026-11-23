@@ -284,6 +284,16 @@ See also `xml-get-attribute-or-nil'."
 				      "\\)*\"\\|'\\(?:[^%&']\\|"
 				      xml-pe-reference-re "\\|"
 				      xml-reference-re "\\)*'\\)"))
+;; [82] NotationDecl ::= '<!NOTATION' S Name S (ExternalID | PublicID) S? '>'
+(defconst xml-system-literal-re "\\(?:\"[^\"]*\"\\|'[^']*'\\)")
+(defconst xml-pubid-literal-re
+  "\\(?:\"[- \r\na-zA-Z0-9'()+,./:=?;!*#@$_%]*\"\\|'[- \r\na-zA-Z0-9()+,./:=?;!*#@$_%]*'\\)")
+(defconst xml-notation-decl-re
+  (concat "<!NOTATION\\s-+" xml-name-re "\\s-+"
+          "\\(?:SYSTEM\\s-+" xml-system-literal-re
+          "\\|PUBLIC\\s-+" xml-pubid-literal-re
+          "\\(?:\\s-+" xml-system-literal-re "\\)?\\)"
+          "\\s-*>"))
 ) ; End of `eval-and-compile'
 
 
@@ -933,12 +943,21 @@ This follows the rule [28] in the XML specifications."
 		  (match-beginning 0))))
 
       ;; Parse the rest of the DTD
-      ;; Fixme: Deal with NOTATION, PIs.
+      ;; FIXME: Conditional sections are not handled yet.
       (while (not (looking-at-p "\\s-*\\]"))
 	(skip-syntax-forward " ")
 	(cond
 	 ((eobp)
 	  (error "XML: (Well-Formed) End of document while reading DTD"))
+	 ;; Processing instructions may appear between declarations.
+	 ((looking-at-p "<\\?")
+	  (xml--parse-processing-instruction)
+	  (and next-parameter-entity
+	       (> (point) next-parameter-entity)
+	       (setq next-parameter-entity
+		     (save-excursion
+		       (if (re-search-forward xml-pe-reference-re nil t)
+			   (match-beginning 0))))))
 	 ;; Element declaration [45]:
 	 ((and (looking-at (eval-when-compile
 			     (concat "<!ELEMENT\\s-+\\(" xml-name-re
@@ -977,6 +996,12 @@ This follows the rule [28] in the XML specifications."
 			     (concat "<!ATTLIST[ \t\n\r]*\\(" xml-name-re
 				     "\\)[ \t\n\r]*\\(" xml-att-def-re
 				     "\\)*[ \t\n\r]*>")))
+	       (or (null next-parameter-entity)
+		   (<= (match-end 0) next-parameter-entity)))
+	  (goto-char (match-end 0)))
+
+	 ;; Notation declaration [82].
+	 ((and (looking-at xml-notation-decl-re)
 	       (or (null next-parameter-entity)
 		   (<= (match-end 0) next-parameter-entity)))
 	  (goto-char (match-end 0)))
