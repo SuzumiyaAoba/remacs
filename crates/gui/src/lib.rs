@@ -3,7 +3,7 @@ use gpui::*;
 use remacs_runtime::frontend::{FontSelection, FrameVisibility, QuitRequest};
 use std::collections::{HashMap, HashSet};
 use std::io;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
@@ -238,7 +238,19 @@ impl Drop for UniquePasteboardRelease {
 #[cfg(target_os = "macos")]
 static NO_ACCEPT_FOCUS_ASSOCIATED_KEY: u8 = 0;
 #[cfg(target_os = "windows")]
-static ORIGINAL_WINDOW_EX_STYLES: OnceLock<Mutex<HashMap<isize, i32>>> = OnceLock::new();
+static ORIGINAL_WINDOW_EX_STYLES: OnceLock<
+    Mutex<HashMap<isize, NativeWindowExStyleOverrides>>,
+> = OnceLock::new();
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+struct NativeWindowExStyleOverrides {
+    original: i32,
+    skip_taskbar: bool,
+    no_accept_focus: bool,
+}
+#[cfg(target_os = "linux")]
+static ORIGINAL_X11_WM_HINTS: OnceLock<Mutex<HashMap<u32, Option<Vec<u32>>>>> =
+    OnceLock::new();
 #[cfg(target_os = "macos")]
 #[link(name = "objc", kind = "dylib")]
 unsafe extern "C" {
@@ -3245,7 +3257,7 @@ fn set_native_no_accept_focus(window: &Window, no_accept_focus: bool) {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn set_native_no_accept_focus(_window: &Window, _no_accept_focus: bool) {}
 
 fn update_native_skip_taskbar(window: &Window, skip_taskbar: bool) {
@@ -3290,11 +3302,21 @@ fn set_native_sticky(window: &Window, sticky: bool) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), String> {
+    update_native_window_ex_style(window, Some(skip_taskbar), None)
+}
+
+#[cfg(target_os = "windows")]
+fn update_native_window_ex_style(
+    window: &Window,
+    skip_taskbar: Option<bool>,
+    no_accept_focus: Option<bool>,
+) -> Result<(), String> {
     use raw_window_handle::RawWindowHandle;
 
     const GWL_EXSTYLE: i32 = -20;
     const WS_EX_TOOLWINDOW: i32 = 0x0000_0080;
     const WS_EX_APPWINDOW: i32 = 0x0004_0000;
+    const WS_EX_NOACTIVATE: i32 = 0x0800_0000;
     const SWP_NOSIZE: u32 = 0x0001;
     const SWP_NOMOVE: u32 = 0x0002;
     const SWP_NOZORDER: u32 = 0x0004;
@@ -3314,12 +3336,34 @@ fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), St
             .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
             .unwrap();
-        if skip_taskbar {
-            let original = *styles.entry(hwnd_id).or_insert(current);
-            (original | WS_EX_TOOLWINDOW) & !WS_EX_APPWINDOW
-        } else {
-            styles.remove(&hwnd_id).unwrap_or(current)
+        if !styles.contains_key(&hwnd_id)
+            && !skip_taskbar.unwrap_or(false)
+            && !no_accept_focus.unwrap_or(false)
+        {
+            return Ok(());
         }
+        let state = styles.entry(hwnd_id).or_insert(NativeWindowExStyleOverrides {
+            original: current,
+            skip_taskbar: false,
+            no_accept_focus: false,
+        });
+        if let Some(skip_taskbar) = skip_taskbar {
+            state.skip_taskbar = skip_taskbar;
+        }
+        if let Some(no_accept_focus) = no_accept_focus {
+            state.no_accept_focus = no_accept_focus;
+        }
+        let mut target = state.original;
+        if state.skip_taskbar {
+            target = (target | WS_EX_TOOLWINDOW) & !WS_EX_APPWINDOW;
+        }
+        if state.no_accept_focus {
+            target |= WS_EX_NOACTIVATE;
+        }
+        if !state.skip_taskbar && !state.no_accept_focus {
+            styles.remove(&hwnd_id);
+        }
+        target
     };
     if target != current {
         unsafe {
@@ -3336,6 +3380,13 @@ fn set_native_skip_taskbar(window: &Window, skip_taskbar: bool) -> Result<(), St
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn set_native_no_accept_focus(window: &Window, no_accept_focus: bool) {
+    if let Err(error) = update_native_window_ex_style(window, None, Some(no_accept_focus)) {
+        eprintln!("remacs: failed to set no-accept-focus: {error}");
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -3381,6 +3432,100 @@ fn xcb_window_context(window: &Window) -> Result<Option<XcbWindowContext>, Strin
         root,
         window: xcb::x::Window::new(handle.window.get()),
     }))
+}
+
+#[cfg(target_os = "linux")]
+fn set_native_no_accept_focus(window: &Window, no_accept_focus: bool) {
+    use xcb::Xid;
+
+    let result = (|| -> Result<(), String> {
+        let Some(context) = xcb_window_context(window)? else {
+            // Wayland does not expose a client request to make a toplevel
+            // ignore pointer focus. X11 honors the ICCCM WM_HINTS input flag.
+            return Ok(());
+        };
+        const INPUT_HINT: u32 = 1;
+        const WM_HINTS_WORDS: usize = 9;
+        let wm_hints = xcb::x::Atom::new(35);
+        let window_id = context.window.resource_id();
+        let mut originals = ORIGINAL_X11_WM_HINTS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap();
+
+        if no_accept_focus {
+            let original = if let Some(original) = originals.get(&window_id) {
+                original.clone()
+            } else {
+                let cookie = context.connection.send_request(&xcb::x::GetProperty {
+                    delete: false,
+                    window: context.window,
+                    property: wm_hints,
+                    r#type: wm_hints,
+                    long_offset: 0,
+                    long_length: WM_HINTS_WORDS as u32,
+                });
+                let value = context
+                    .connection
+                    .wait_for_reply(cookie)
+                    .map_err(|error| error.to_string())?
+                    .value::<u32>()
+                    .collect::<Vec<_>>();
+                let original = (!value.is_empty()).then_some(value);
+                originals.insert(window_id, original.clone());
+                original
+            };
+            let mut hints = original.unwrap_or_default();
+            hints.resize(WM_HINTS_WORDS, 0);
+            hints[0] |= INPUT_HINT;
+            hints[1] = 0;
+            let cookie = context
+                .connection
+                .send_request_checked(&xcb::x::ChangeProperty {
+                    mode: xcb::x::PropMode::Replace,
+                    window: context.window,
+                    property: wm_hints,
+                    r#type: wm_hints,
+                    data: &hints,
+                });
+            context
+                .connection
+                .check_request(cookie)
+                .map_err(|error| error.to_string())?;
+        } else if let Some(original) = originals.remove(&window_id) {
+            if let Some(hints) = original {
+                let cookie = context
+                    .connection
+                    .send_request_checked(&xcb::x::ChangeProperty {
+                        mode: xcb::x::PropMode::Replace,
+                        window: context.window,
+                        property: wm_hints,
+                        r#type: wm_hints,
+                        data: &hints,
+                    });
+                context
+                    .connection
+                    .check_request(cookie)
+                    .map_err(|error| error.to_string())?;
+            } else {
+                let cookie = context.connection.send_request_checked(&xcb::x::DeleteProperty {
+                    window: context.window,
+                    property: wm_hints,
+                });
+                context
+                    .connection
+                    .check_request(cookie)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        context
+            .connection
+            .flush()
+            .map_err(|error| error.to_string())
+    })();
+    if let Err(error) = result {
+        eprintln!("remacs: failed to set no-accept-focus: {error}");
+    }
 }
 
 #[cfg(target_os = "linux")]
