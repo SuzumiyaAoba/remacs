@@ -248,8 +248,6 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 fn perform_ns_service(service: &str, send: Option<&str>) -> Result<Option<String>, String> {
-    use std::ffi::CStr;
-
     let service_name: id =
         unsafe { msg_send![NSString::alloc(nil).init_str(service), autorelease] };
     let pasteboard = unsafe { NSPasteboard::pasteboardWithUniqueName(nil) };
@@ -285,15 +283,8 @@ fn perform_ns_service(service: &str, send: Option<&str>) -> Result<Option<String
         return Ok(None);
     }
     let string = unsafe { pasteboard.stringForType(return_type) };
-    if string != nil {
-        let bytes = unsafe { NSString::UTF8String(string) };
-        if !bytes.is_null() {
-            return Ok(Some(
-                unsafe { CStr::from_ptr(bytes) }
-                    .to_string_lossy()
-                    .into_owned(),
-            ));
-        }
+    if let Some(text) = appkit_string(string) {
+        return Ok(Some(text));
     }
     let data = unsafe { pasteboard.dataForType(return_type) };
     if data == nil {
@@ -339,13 +330,19 @@ fn native_service_provider_class() -> &'static Class {
 
 #[cfg(target_os = "macos")]
 fn appkit_string(value: id) -> Option<String> {
-    use std::ffi::CStr;
-
     if value == nil {
         return None;
     }
-    let bytes = unsafe { NSString::UTF8String(value) };
-    (!bytes.is_null()).then(|| unsafe { CStr::from_ptr(bytes).to_string_lossy().into_owned() })
+    const NS_UTF8_STRING_ENCODING: NSUInteger = 4;
+
+    let bytes = unsafe { NSString::UTF8String(value) as *const u8 };
+    if bytes.is_null() {
+        return None;
+    }
+    let length: usize =
+        unsafe { msg_send![value, lengthOfBytesUsingEncoding: NS_UTF8_STRING_ENCODING] };
+    let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
+    Some(String::from_utf8_lossy(bytes).into_owned())
 }
 
 #[cfg(target_os = "macos")]

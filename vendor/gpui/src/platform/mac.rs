@@ -85,6 +85,22 @@ impl NSStringExt for id {
     }
 }
 
+const NS_UTF8_STRING_ENCODING: NSUInteger = 4;
+
+unsafe fn ns_string_to_string(value: id) -> Option<String> {
+    if value.is_null() {
+        return None;
+    }
+    let bytes = unsafe { NSString::UTF8String(value) as *const u8 };
+    if bytes.is_null() {
+        return None;
+    }
+    let length: usize =
+        unsafe { msg_send![value, lengthOfBytesUsingEncoding: NS_UTF8_STRING_ENCODING] };
+    let bytes = unsafe { std::slice::from_raw_parts(bytes, length) };
+    Some(String::from_utf8_lossy(bytes).into_owned())
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 struct NSRange {

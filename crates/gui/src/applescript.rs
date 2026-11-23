@@ -8,10 +8,7 @@ use cocoa::{
 };
 use objc::{class, msg_send, sel, sel_impl};
 use remacs_runtime::frontend::AppleScriptResult;
-use std::{
-    ffi::{CStr, c_char},
-    sync::mpsc,
-};
+use std::sync::mpsc;
 
 const TYPE_NULL: u32 = u32::from_be_bytes(*b"null");
 const TYPE_UNICODE_TEXT: u32 = u32::from_be_bytes(*b"utxt");
@@ -118,17 +115,6 @@ unsafe fn error_message(error_info: id) -> String {
     "AppleScript compilation or execution failed".to_owned()
 }
 
-unsafe fn utf8_string(value: id) -> Option<String> {
-    if value == nil {
-        return None;
-    }
-    let bytes: *const c_char = unsafe { msg_send![value, UTF8String] };
-    if bytes.is_null() {
-        return None;
-    }
-    Some(
-        unsafe { CStr::from_ptr(bytes) }
-            .to_string_lossy()
-            .into_owned(),
-    )
+fn utf8_string(value: id) -> Option<String> {
+    super::appkit_string(value)
 }

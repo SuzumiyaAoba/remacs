@@ -1,13 +1,13 @@
-use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
+use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, ns_string_to_string, renderer};
 use crate::{
-    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalDragOperation, ExternalPaths, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalDragOperation, ExternalPaths,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     SharedString, Size, SystemWindowTab, TextDropEvent, Timer, WindowAppearance,
-    WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowKind, WindowParams, dispatch_get_main_queue,
-    dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point, px, size,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams,
+    dispatch_get_main_queue, dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point,
+    px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -3214,8 +3214,7 @@ fn external_text_from_event(dragging_info: *mut Object) -> Option<String> {
     if text == nil {
         return None;
     }
-    let string = unsafe { NSString::UTF8String(text) };
-    (!string.is_null()).then(|| unsafe { CStr::from_ptr(string).to_string_lossy().into_owned() })
+    unsafe { ns_string_to_string(text) }
 }
 
 fn external_color_from_event(dragging_info: *mut Object) -> Option<String> {
