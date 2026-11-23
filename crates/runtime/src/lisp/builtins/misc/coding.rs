@@ -1272,7 +1272,7 @@ pub(super) fn f_coding_system_eol_type(i: &mut Interp, a: crate::lisp::Argv) -> 
     Ok(Value::vector(
         ["unix", "dos", "mac"]
             .iter()
-            .map(|s| Value::Sym(i.intern(&format!("{base}-{s}"))))
+            .map(|s| coding_alias_symbol(i, &format!("{base}-{s}")))
             .collect(),
     ))
 }
