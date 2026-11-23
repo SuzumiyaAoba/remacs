@@ -3893,6 +3893,38 @@ fn visual_line_point_step(
     (next_point, paragraph_is_rtl)
 }
 
+fn graphical_screen_line(
+    i: &Interp,
+    buffer_id: usize,
+    point: usize,
+) -> Option<(usize, String)> {
+    let frame = i.selected_frame.as_ref()?.clone();
+    let (width, height) = {
+        let frame = frame.borrow();
+        (frame.width, frame.height)
+    };
+    let grid = crate::frontend::render_frame_grid_with_input_cached(
+        i, &frame, width, height, None,
+    );
+    let input = grid.input.as_ref()?;
+    if input.buffer_id != buffer_id {
+        return None;
+    }
+    let screen_row = grid.cursors.iter().find(|cursor| cursor.selected)?.row;
+    let row = input.rows.iter().find(|row| row.row == screen_row)?;
+    let row_end = row
+        .buffer_start
+        .saturating_add(row.source_offsets.len().saturating_sub(1));
+    if point < row.buffer_start || point > row_end {
+        return None;
+    }
+    let text = i.buffers.get(buffer_id)?.borrow().text.clone();
+    Some((
+        row.buffer_start,
+        text.substring(row.buffer_start, row_end).to_unicode_lossy(),
+    ))
+}
+
 fn f_move_point_visually(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     // GNU Fmove_point_visually (xdisp.c): CHECK_FIXNUM, then
     // dir = sign(arg) (0 counts as -1).  Graphical frames compute the
@@ -3928,6 +3960,7 @@ fn f_move_point_visually(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
     }
     if graphical {
         let buffer_id = b.borrow().id;
+        let point = pt.saturating_sub(1) as usize;
         let bidi_display_reordering =
             crate::frontend::buffer_setting(i, "bidi-display-reordering", buffer_id).truthy();
         let bidi_paragraph_direction =
@@ -3937,27 +3970,34 @@ fn f_move_point_visually(i: &mut Interp, a: crate::lisp::Argv) -> EvalResult {
             Value::Sym(symbol) if i.symbol_name(symbol) == "right-to-left" => Some(Level::rtl()),
             _ => None,
         };
-        let requested_point = {
+        let (line_start, line) = {
             let bb = b.borrow();
             let point = bb.point();
             let line_start = bb.text.line_start(bb.text.line_of_pos(point)).max(bb.begv);
             let line_end = bb.text.line_end(line_start).min(bb.zv);
             let line = bb.text.substring(line_start, line_end).to_unicode_lossy();
-            let char_point = point.saturating_sub(line_start);
-            let next_char_point = if bidi_display_reordering {
-                let (next, paragraph_is_rtl) =
-                    visual_line_point_step(&line, char_point, dir, default_level);
-                next.map_or_else(
-                    || {
-                        let logical_direction = if paragraph_is_rtl { -dir } else { dir };
-                        point as i128 + logical_direction
-                    },
-                    |offset| line_start.saturating_add(offset) as i128,
-                )
-            } else {
-                point as i128 + dir
-            };
-            next_char_point
+            (line_start, line)
+        };
+        let (screen_line_start, screen_line) = graphical_screen_line(i, buffer_id, point)
+            .unwrap_or((line_start, line.clone()));
+        let paragraph_level = BidiInfo::new(&line, default_level)
+            .paragraphs
+            .first()
+            .map(|paragraph| paragraph.level)
+            .or(default_level);
+        let char_point = point.saturating_sub(screen_line_start);
+        let requested_point = if bidi_display_reordering {
+            let (next, paragraph_is_rtl) =
+                visual_line_point_step(&screen_line, char_point, dir, paragraph_level);
+            next.map_or_else(
+                || {
+                    let logical_direction = if paragraph_is_rtl { -dir } else { dir };
+                    point as i128 + logical_direction
+                },
+                |offset| screen_line_start.saturating_add(offset) as i128,
+            )
+        } else {
+            pt + dir
         };
         if requested_point < edge_lo as i128 {
             crate::buffer::primitives::goto_char_set_point(i, &b, edge_lo)?;
