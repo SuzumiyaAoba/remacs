@@ -392,6 +392,31 @@
           (eval (cons 'cond clauses))
         (circular-list (list (car err) qa-eval-circular-short-circuit-side))))
     '(circular-list nil))
+(defvar qa-eval-or-repair-count 0)
+(qa (progn
+      (setq qa-eval-or-repair-count 0)
+      (let* ((second-cell (cons nil nil))
+             (first-form
+              (list 'progn
+                    (list 'setcdr
+                          (list 'quote second-cell)
+                          (list 'quote second-cell))
+                    nil))
+             (second-form
+              (list 'progn
+                    (list 'setq 'qa-eval-or-repair-count
+                          (list '1+ 'qa-eval-or-repair-count))
+                    (list 'if
+                          (list '= 'qa-eval-or-repair-count 1)
+                          (list 'setcdr (list 'quote second-cell) nil))
+                    nil))
+             (form (cons 'or (cons first-form second-cell))))
+        (setcar second-cell second-form)
+        (list (condition-case err
+                  (eval form nil)
+                (error (list :error (car err))))
+              qa-eval-or-repair-count)))
+    '(nil 2))
 
 ;; Function-definition bodies must reject circular and dotted tails instead
 ;; of silently turning them into empty bodies.

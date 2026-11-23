@@ -360,15 +360,11 @@ fn sf_and(i: &mut Interp, args: Value) -> EvalResult {
 fn sf_or(i: &mut Interp, args: Value) -> EvalResult {
     reject_circular_spine(i, &args)?;
     let mut cur = args;
-    let mut seen = FxHashSet::default();
     let mut until_quit = 1024usize;
     loop {
         match cur.clone() {
             Value::Nil => return Ok(Value::Nil),
             Value::Cons(cell) => {
-                if !seen.insert(Rc::as_ptr(&cell) as usize) {
-                    return Err(i.signal_data(sym::CIRCULAR_LIST, vec![cur.clone()]));
-                }
                 // Match `and'/'progn': freeze the next cons link before
                 // evaluating the current form, but read its car later.
                 let (form, next) = cons_parts(i, &cell)?;
