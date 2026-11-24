@@ -885,19 +885,18 @@ fn plain_setq_var(i: &Interp, v: &Value) -> bool {
     }
 }
 
-/// Whether symbol ID's function cell holds a macro — `macrop' on the
-/// symbol, following its cell (including macro-autoload cells).
-fn sym_macrop(i: &mut Interp, id: SymId) -> Result<bool, Flow> {
-    match i.symbol_function(id) {
+/// Whether a resolved function value is a macro, including autoload cells.
+fn function_value_macrop(i: &mut Interp, function: &Value) -> Result<bool, Flow> {
+    match function {
         Value::Lambda(l) => Ok(l.is_macro),
         Value::Cons(c) => {
-            let (car, _) = crate::lisp::eval::cons_parts(i, &c)?;
+            let (car, _) = crate::lisp::eval::cons_parts(i, c)?;
             if i.sym_is(&car, sym::MACRO) {
                 return Ok(true);
             }
             let auto_id = i.q("autoload");
             if i.sym_is(&car, auto_id) {
-                let form = Value::Cons(c);
+                let form = Value::Cons(Rc::clone(c));
                 return Ok(macroexpand_list_to_vec(i, &form)?
                     .and_then(|v| v.get(4).map(|x| x.truthy()))
                     .unwrap_or(false));
@@ -2321,11 +2320,19 @@ fn macroexpand_all_expanded(
                         }
                         if let Some(fv) = f {
                             match i.sym_id(&fv) {
-                                Some(fsid) => {
+                                Some(_) => {
                                     // `(funcall #'sym A...)' → `(sym A...)'
                                     // unless sym is a special form or macro.
-                                    let is_sf = crate::lisp::special::special_form(fsid).is_some();
-                                    if !is_sf && !sym_macrop(i, fsid)? {
+                                    let function = i.indirect_function_value(&fv);
+                                    let is_sf = matches!(
+                                        &function,
+                                        Value::Subr(subr)
+                                            if matches!(
+                                                subr.arity,
+                                                crate::lisp::value::Arity::Unevalled
+                                            )
+                                    );
+                                    if !is_sf && !function_value_macrop(i, &function)? {
                                         let call = if let Some(eargs) = &eargs {
                                             let mut call = vec![fv.clone()];
                                             call.extend(eargs.iter().cloned());

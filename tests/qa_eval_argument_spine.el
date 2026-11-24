@@ -308,6 +308,18 @@
        '(funcall (function list)
           (qa-eval-dotted-funcall-macro) . tail)))
     '(list nil . tail))
+(qa (progn
+      (if (fboundp 'macroexpand-all) nil (require 'macroexp))
+      (defalias 'qa-eval-if-macroexpand-alias 'if)
+      (fset 'qa-eval-real-macro
+            (cons 'macro (make-interpreted-closure nil '(nil) nil)))
+      (defalias 'qa-eval-macro-expand-alias 'qa-eval-real-macro)
+      (list (macroexpand-all
+             '(funcall (function qa-eval-if-macroexpand-alias) t 1 2))
+            (macroexpand-all
+             '(funcall (function qa-eval-macro-expand-alias)))))
+    '((funcall #'qa-eval-if-macroexpand-alias t 1 2)
+      (funcall #'qa-eval-macro-expand-alias)))
 
 ;; Circular malformed let specs signal promptly and retain the original
 ;; cyclic spec as one error datum instead of flattening it forever.
