@@ -248,6 +248,29 @@
       (list result qa3709-invalid-tail-count))
     '((:error invalid-function 1) 1))
 
+;; An underflow signals at the missing parameter after binding its valid
+;; prefix, so that prefix's variable watcher has already run.
+(defvar qa3711-underflow-x 0)
+(defvar qa3711-underflow-y 0)
+(defvar qa3711-underflow-count 0)
+(defun qa3711-underflow-watcher (_symbol _value operation _where)
+  (when (eq operation 'let)
+    (setq qa3711-underflow-count (1+ qa3711-underflow-count))))
+(qa (let ((function
+           (make-byte-code '(qa3711-underflow-x qa3711-underflow-y)
+                           (unibyte-string 192 135) [ok] 1)))
+      (setq qa3711-underflow-count 0)
+      (add-variable-watcher 'qa3711-underflow-x
+                            #'qa3711-underflow-watcher)
+      (unwind-protect
+          (condition-case err
+              (funcall function 7)
+            (wrong-number-of-arguments
+             (list :error (car err) qa3711-underflow-count)))
+        (remove-variable-watcher 'qa3711-underflow-x
+                                 #'qa3711-underflow-watcher)))
+    '(:error wrong-number-of-arguments 1))
+
 (qa
 (let*
     ((qa254-code (unibyte-string 192 32 136 193 135))
