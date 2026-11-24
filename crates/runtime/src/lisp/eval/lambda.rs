@@ -370,7 +370,33 @@ impl Interp {
         let mut optional = false;
         let mut rest = false;
         let mut previous_rest = false;
-        let mut seen_states = FxHashSet::default();
+        let initially_circular = {
+            let mut initial_cells = FxHashSet::default();
+            let mut scan = arglist.clone();
+            let mut scan_until_quit = 4096usize;
+            let mut circular = false;
+            while let Value::Cons(cell) = scan.clone() {
+                if !initial_cells.insert(Rc::as_ptr(&cell) as usize) {
+                    circular = true;
+                    break;
+                }
+                scan = super::cons_cdr(self, &cell)?;
+                scan_until_quit -= 1;
+                if scan_until_quit == 0 {
+                    self.maybe_quit()?;
+                    scan_until_quit = 4096;
+                }
+            }
+            circular
+        };
+        // Keep the safety fallback for an arglist that was already cyclic
+        // on entry. Watchers can create a temporary cycle while binding a
+        // proper arglist, so repeats in that live walk must remain observable.
+        let mut seen_states = if initially_circular {
+            Some(FxHashSet::default())
+        } else {
+            None
+        };
         loop {
             let current_cell = match &syms {
                 Value::Cons(cell) => Rc::clone(cell),
@@ -387,8 +413,10 @@ impl Interp {
                 rest,
                 previous_rest,
             );
-            if !seen_states.insert(state) {
-                return Err(inv(self));
+            if let Some(seen_states) = &mut seen_states {
+                if !seen_states.insert(state) {
+                    return Err(inv(self));
+                }
             }
             let (elt, _) = super::cons_parts(self, &current_cell)?;
             let s = match self.sym_id(&elt) {

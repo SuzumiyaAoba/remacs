@@ -99,6 +99,51 @@
     '(wrong-type-argument symbolp
       (autoload "qa-no-such-file" nil nil nil)))
 
+(defvar qa-eval-lambda-cycle-bcell nil)
+(defvar qa-eval-lambda-cycle-count 0)
+(qa (progn
+      (setq qa-eval-lambda-cycle-count 0
+            qa-eval-lambda-cycle-bcell nil)
+      (fset 'qa-eval-lambda-cycle-watch-a
+            (make-interpreted-closure
+             '(_symbol _value operation _where)
+             '((if (eq operation 'let)
+                   (setcdr qa-eval-lambda-cycle-bcell
+                           qa-eval-lambda-cycle-bcell)))
+             nil))
+      (fset 'qa-eval-lambda-cycle-watch-b
+            (make-interpreted-closure
+             '(_symbol _value operation _where)
+             '((if (eq operation 'let)
+                   (progn
+                     (setq qa-eval-lambda-cycle-count
+                           (1+ qa-eval-lambda-cycle-count))
+                     (if (= qa-eval-lambda-cycle-count 2)
+                         (setcdr qa-eval-lambda-cycle-bcell nil)))))
+             nil))
+      (let* ((arglist (list 'qa-eval-lambda-cycle-a
+                            '&optional
+                            'qa-eval-lambda-cycle-b))
+             (qa-eval-lambda-cycle-bcell (cddr arglist))
+             (function
+              (make-interpreted-closure arglist
+                                        '(qa-eval-lambda-cycle-b) nil)))
+        (unwind-protect
+            (progn
+              (add-variable-watcher 'qa-eval-lambda-cycle-a
+                                    'qa-eval-lambda-cycle-watch-a)
+              (add-variable-watcher 'qa-eval-lambda-cycle-b
+                                    'qa-eval-lambda-cycle-watch-b)
+              (list (condition-case err
+                        (funcall function 'first)
+                      (error (list :error (car err))))
+                    qa-eval-lambda-cycle-count))
+          (remove-variable-watcher 'qa-eval-lambda-cycle-a
+                                   'qa-eval-lambda-cycle-watch-a)
+          (remove-variable-watcher 'qa-eval-lambda-cycle-b
+                                   'qa-eval-lambda-cycle-watch-b))))
+    '(nil 2))
+
 ;; Autoload code can mutate the caller's form before GNU recomputes the
 ;; function-call argument count. The new circular spine signals before any
 ;; argument form runs; the pre-load count must not drive the later walk.
