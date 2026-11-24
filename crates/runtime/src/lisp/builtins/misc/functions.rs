@@ -235,6 +235,11 @@ pub(super) fn f_func_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
     } else {
         fun
     };
+    let special_form_min = match &fun {
+        Value::Sym(id) => crate::lisp::special::special_form_min_args(*id),
+        Value::Subr(s) => crate::lisp::special::special_form_min_args(i.q(s.name)),
+        _ => 0,
+    };
     // A `(lambda ARGLIST ...)' list.
     let mut list_arity = |v: &Value| -> Option<FunctionArity> {
         let cells = v.list_to_vec().ok()?;
@@ -264,13 +269,12 @@ pub(super) fn f_func_arity(i: &mut Interp, args: crate::lisp::Argv) -> EvalResul
         }
         FunctionArity::Many { min } => (Value::integer(min as i128), Value::Sym(i.q("many"))),
         FunctionArity::Unevalled => {
-            // `(2 . unevalled)' for `if' — min from the special-form table.
-            let min = match &args[0] {
-                Value::Sym(id) => crate::lisp::special::special_form_min_args(*id),
-                Value::Subr(s) => crate::lisp::special::special_form_min_args(i.q(s.name)),
-                _ => 0,
-            };
-            (Value::integer(min as i128), Value::Sym(i.q("unevalled")))
+            // The special-form table is keyed by the resolved function
+            // name; aliases share the target's minimum arity.
+            (
+                Value::integer(special_form_min as i128),
+                Value::Sym(i.q("unevalled")),
+            )
         }
     };
     Ok(Value::cons(min, max))
