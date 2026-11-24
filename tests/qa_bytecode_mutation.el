@@ -224,6 +224,30 @@
                    (funcall function 9))))
     '(7 1))
 
+;; A malformed list argdesc binds its valid prefix before rejecting the tail.
+(defvar qa3709-invalid-tail-x 0)
+(defvar qa3709-invalid-tail-count 0)
+(defun qa3709-invalid-tail-watcher (_symbol _value operation _where)
+  (when (eq operation 'let)
+    (setq qa3709-invalid-tail-count (1+ qa3709-invalid-tail-count))))
+(qa (let* ((function
+            (make-byte-code '(qa3709-invalid-tail-x . qa3709-invalid-tail)
+                            (unibyte-string 192 135) [ok] 1))
+           result)
+      (setq qa3709-invalid-tail-count 0)
+      (add-variable-watcher 'qa3709-invalid-tail-x
+                            #'qa3709-invalid-tail-watcher)
+      (unwind-protect
+          (setq result
+                (condition-case err
+                    (funcall function 7)
+                  (invalid-function
+                   (list :error (car err) qa3709-invalid-tail-count))))
+        (remove-variable-watcher 'qa3709-invalid-tail-x
+                                 #'qa3709-invalid-tail-watcher))
+      (list result qa3709-invalid-tail-count))
+    '((:error invalid-function 1) 1))
+
 (qa
 (let*
     ((qa254-code (unibyte-string 192 32 136 193 135))
