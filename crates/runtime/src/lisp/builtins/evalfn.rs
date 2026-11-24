@@ -1093,6 +1093,37 @@ fn macroexpand_list_to_vec(i: &mut Interp, list: &Value) -> Result<Option<Vec<Va
     }
 }
 
+/// Return the cons prefix and dotted tail of a list. Circular spines keep
+/// their existing fallback behavior.
+fn macroexpand_improper_prefix_to_vec(
+    i: &mut Interp,
+    list: &Value,
+) -> Result<Option<(Vec<Value>, Value)>, Flow> {
+    let mut items = Vec::new();
+    let mut cur = list.clone();
+    let mut seen = FxHashSet::default();
+    let mut until_quit = 4096usize;
+    loop {
+        match cur {
+            Value::Nil => return Ok(None),
+            Value::Cons(cell) => {
+                if !seen.insert(Rc::as_ptr(&cell) as usize) {
+                    return Ok(None);
+                }
+                let (car, cdr) = crate::lisp::eval::cons_parts(i, &cell)?;
+                items.push(car);
+                cur = cdr;
+                until_quit -= 1;
+                if until_quit == 0 {
+                    i.maybe_quit()?;
+                    until_quit = 4096;
+                }
+            }
+            tail => return Ok(Some((items, tail))),
+        }
+    }
+}
+
 /// Return the improper atom at the end of LIST, if any. Circular spines use
 /// the caller's existing fallback behavior rather than being treated as a
 /// dotted tail.
@@ -1763,40 +1794,53 @@ fn macroexpand_all_expanded(
             // `list_to_vec' — `want_list' builds a `listp' signal that
             // is only discarded here, which also pollutes the
             // REMACS_BT_ERR log.)
-            let Some(items) = macroexpand_list_to_vec(i, &expanded)? else {
-                if i.sym_is(&car, sym::DEFUN) || i.sym_is(&car, sym::DEFMACRO) {
-                    if let Some(tail) = macroexpand_dotted_tail(i, &expanded)? {
-                        return Err(i.wrong_type_mut("listp", &tail));
-                    }
-                }
-                if matches!(&car, Value::Cons(_)) {
-                    if let Some(result) =
-                        macroexpand_direct_lambda_call(i, &expanded, &car)?
-                    {
-                        return Ok(result);
-                    }
-                }
-                if i.sym_is(&car, sym::SETQ) {
-                    let mut tail = cdr;
-                    let mut seen = FxHashSet::default();
-                    loop {
-                        match &tail {
-                            Value::Nil => break,
-                            Value::Cons(cell) => {
-                                if !seen.insert(Rc::as_ptr(cell) as usize) {
-                                    break;
-                                }
-                                let next = crate::lisp::eval::cons_parts(i, cell)?.1;
-                                tail = next;
-                            }
-                            _ => return Err(i.wrong_type_mut("listp", &tail)),
+            let items = if let Some(items) = macroexpand_list_to_vec(i, &expanded)? {
+                items
+            } else {
+                let dotted_let_items = if i.sym_is(&car, sym::LET)
+                    || i.sym_is(&car, sym::LET_STAR)
+                {
+                    macroexpand_improper_prefix_to_vec(i, &expanded)?
+                } else {
+                    None
+                };
+                if let Some((items, _tail)) = dotted_let_items {
+                    items
+                } else {
+                    if i.sym_is(&car, sym::DEFUN) || i.sym_is(&car, sym::DEFMACRO) {
+                        if let Some(tail) = macroexpand_dotted_tail(i, &expanded)? {
+                            return Err(i.wrong_type_mut("listp", &tail));
                         }
                     }
+                    if matches!(&car, Value::Cons(_)) {
+                        if let Some(result) =
+                            macroexpand_direct_lambda_call(i, &expanded, &car)?
+                        {
+                            return Ok(result);
+                        }
+                    }
+                    if i.sym_is(&car, sym::SETQ) {
+                        let mut tail = cdr;
+                        let mut seen = FxHashSet::default();
+                        loop {
+                            match &tail {
+                                Value::Nil => break,
+                                Value::Cons(cell) => {
+                                    if !seen.insert(Rc::as_ptr(cell) as usize) {
+                                        break;
+                                    }
+                                    let next = crate::lisp::eval::cons_parts(i, cell)?.1;
+                                    tail = next;
+                                }
+                                _ => return Err(i.wrong_type_mut("listp", &tail)),
+                            }
+                        }
+                    }
+                    if i.sym_id(&car).is_none() {
+                        return Ok(expanded);
+                    }
+                    return macroexpand_live_form_spine(i, &expanded, compiler_macro);
                 }
-                if i.sym_id(&car).is_none() {
-                    return Ok(expanded);
-                }
-                return macroexpand_live_form_spine(i, &expanded, compiler_macro);
             };
             let _ = cdr;
             // Special forms whose non-code positions must not be

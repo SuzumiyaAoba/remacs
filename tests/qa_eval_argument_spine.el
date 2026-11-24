@@ -280,6 +280,17 @@
               (error err))))
     '((wrong-type-argument listp tail)
       (wrong-type-argument listp tail)))
+(qa (progn
+      (if (fboundp 'macroexpand-all) nil (require 'macroexp))
+      (fset 'qa-eval-dotted-let-macro (cons 'macro 'ignore))
+      (list (macroexpand-all
+             '(let ((qa-eval-dotted-let-x (qa-eval-dotted-let-macro)))
+                (qa-eval-dotted-let-macro) . tail))
+            (macroexpand-all
+             '(let* ((qa-eval-dotted-let-x (qa-eval-dotted-let-macro)))
+                (qa-eval-dotted-let-macro) . tail))))
+    '((let ((qa-eval-dotted-let-x nil)) nil . tail)
+      (let* ((qa-eval-dotted-let-x nil)) nil . tail)))
 
 ;; Circular malformed let specs signal promptly and retain the original
 ;; cyclic spec as one error datum instead of flattening it forever.
