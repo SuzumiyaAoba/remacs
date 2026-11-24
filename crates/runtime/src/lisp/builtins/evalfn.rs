@@ -1622,6 +1622,41 @@ fn binder_syms(i: &mut Interp, vars: &Value) -> Result<Vec<SymId>, Flow> {
     Ok(out)
 }
 
+/// Collect a function-quoted lambda's binders without validating its raw
+/// arglist. GNU macroexpands the body forms while treating the arglist as
+/// data, so a circular arglist must not prevent those expansions.
+fn binder_syms_tolerate_cycle(i: &mut Interp, vars: &Value) -> Result<Vec<SymId>, Flow> {
+    let mut out = Vec::new();
+    let mut cur = vars.clone();
+    let mut seen = FxHashSet::default();
+    let mut until_quit = 4096usize;
+    loop {
+        let Value::Cons(cell) = cur else {
+            break;
+        };
+        if !seen.insert(Rc::as_ptr(&cell) as usize) {
+            break;
+        }
+        let (spec, tail) = crate::lisp::eval::cons_parts(i, &cell)?;
+        let var = match &spec {
+            Value::Cons(binding) => crate::lisp::eval::cons_parts(i, binding)?.0,
+            other => other.clone(),
+        };
+        if let Some(id) = i.sym_id(&var) {
+            if !i.symbol_name(id).starts_with('&') {
+                out.push(id);
+            }
+        }
+        cur = tail;
+        until_quit -= 1;
+        if until_quit == 0 {
+            i.maybe_quit()?;
+            until_quit = 4096;
+        }
+    }
+    Ok(out)
+}
+
 /// Expand FORM with `macroexpand-all-environment' rebound to a
 /// filtered copy of ENV when symbol macros are active — mirroring
 /// GNU's alpha-renaming scope shrink for shadowed binders.  Without
@@ -1965,7 +2000,7 @@ fn macroexpand_all_expanded(
                                 }
                                 let (arglist, body) =
                                     crate::lisp::eval::cons_parts(i, &arg_cell)?;
-                                let bound = binder_syms(i, &arglist)?;
+                                let bound = binder_syms_tolerate_cycle(i, &arglist)?;
                                 let body = macroexpand_live_filtered_body(
                                     i, &body, env_id, &env, sm, &bound, false,
                                 )?;

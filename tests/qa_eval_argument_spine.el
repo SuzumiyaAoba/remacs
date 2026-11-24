@@ -320,6 +320,27 @@
              '(funcall (function qa-eval-macro-expand-alias)))))
     '((funcall #'qa-eval-if-macroexpand-alias t 1 2)
       (funcall #'qa-eval-macro-expand-alias)))
+(defvar qa-eval-funcarg-cycle-count 0)
+(qa (progn
+      (setq qa-eval-funcarg-cycle-count 0)
+      (if (fboundp 'macroexpand-all) nil (require 'macroexp))
+      (fset 'qa-eval-funcarg-cycle-macro
+            (cons 'macro
+                  (make-interpreted-closure nil
+                    '((setq qa-eval-funcarg-cycle-count
+                            (1+ qa-eval-funcarg-cycle-count))
+                      nil)
+                    nil)))
+      (let* ((arglist (list 'qa-eval-funcarg-cycle-var))
+             (lambda-form
+              (list 'lambda arglist '(qa-eval-funcarg-cycle-macro)))
+             (form (list 'function lambda-form)))
+        (setcdr arglist arglist)
+        (list (condition-case err
+                  (progn (macroexpand-all form) 'ok)
+                (error (list :error (car err))))
+              qa-eval-funcarg-cycle-count)))
+    '(ok 1))
 
 ;; Circular malformed let specs signal promptly and retain the original
 ;; cyclic spec as one error datum instead of flattening it forever.
