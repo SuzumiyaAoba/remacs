@@ -301,6 +301,13 @@
           . tail)))
     '(condition-case (qa-eval-dotted-condition-var-macro)
        nil (error nil) . tail))
+(qa (progn
+      (if (fboundp 'macroexpand-all) nil (require 'macroexp))
+      (fset 'qa-eval-dotted-funcall-macro (cons 'macro 'ignore))
+      (macroexpand-all
+       '(funcall (function list)
+          (qa-eval-dotted-funcall-macro) . tail)))
+    '(list nil . tail))
 
 ;; Circular malformed let specs signal promptly and retain the original
 ;; cyclic spec as one error datum instead of flattening it forever.

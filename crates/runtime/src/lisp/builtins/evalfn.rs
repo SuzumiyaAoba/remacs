@@ -1789,23 +1789,27 @@ fn macroexpand_all_expanded(
             if i.sym_is(&car, sym::COND) {
                 return macroexpand_all_cond(i, &expanded, &car, &cdr);
             }
+            let funcall_id = i.q("funcall");
             // Rebuild with expanded elements; improper lists pass
             // through unexpanded rather than failing.  (Plain
             // `list_to_vec' — `want_list' builds a `listp' signal that
             // is only discarded here, which also pollutes the
             // REMACS_BT_ERR log.)
+            let mut dotted_outer = false;
             let items = if let Some(items) = macroexpand_list_to_vec(i, &expanded)? {
                 items
             } else {
                 let dotted_special_items = if i.sym_is(&car, sym::LET)
                     || i.sym_is(&car, sym::LET_STAR)
                     || i.sym_is(&car, sym::CONDITION_CASE)
+                    || i.sym_is(&car, funcall_id)
                 {
                     macroexpand_improper_prefix_to_vec(i, &expanded)?
                 } else {
                     None
                 };
                 if let Some((items, _tail)) = dotted_special_items {
+                    dotted_outer = true;
                     items
                 } else {
                     if i.sym_is(&car, sym::DEFUN) || i.sym_is(&car, sym::DEFMACRO) {
@@ -1851,7 +1855,6 @@ fn macroexpand_all_expanded(
             // expansion — GNU's `macroexp--expand-all' keeps these
             // positions verbatim.
             let closure_id = i.q("closure");
-            let funcall_id = i.q("funcall");
             if let Some(id) = i.sym_id(&car) {
                 if matches!(id, sym::LET | sym::LET_STAR) && items.len() < 3 {
                     let mut normalized = items.clone();
@@ -2290,10 +2293,20 @@ fn macroexpand_all_expanded(
                             return Ok(expanded);
                         }
                         let eexp = macroexpand_all_recur(i, &items[1])?;
-                        let mut eargs = Vec::with_capacity(items.len() - 2);
-                        for a in &items[2..] {
-                            eargs.push(macroexpand_all_recur(i, a)?);
-                        }
+                        let (eargs, expanded_args) = if dotted_outer {
+                            let arg_forms = macroexpand_list_tail(i, &expanded, 2)?;
+                            let expanded_args =
+                                macroexpand_live_spine(i, &arg_forms, macroexpand_all_recur)?;
+                            let eargs = macroexpand_list_to_vec(i, &expanded_args)?;
+                            (eargs, expanded_args)
+                        } else {
+                            let mut eargs = Vec::with_capacity(items.len().saturating_sub(2));
+                            for argument in &items[2..] {
+                                eargs.push(macroexpand_all_recur(i, argument)?);
+                            }
+                            let expanded_args = Value::list(eargs.clone());
+                            (Some(eargs), expanded_args)
+                        };
                         let mut f: Option<Value> = None;
                         if let Value::Cons(c) = &eexp {
                             let is_fn =
@@ -2313,9 +2326,14 @@ fn macroexpand_all_expanded(
                                     // unless sym is a special form or macro.
                                     let is_sf = crate::lisp::special::special_form(fsid).is_some();
                                     if !is_sf && !sym_macrop(i, fsid)? {
-                                        let mut call = vec![fv.clone()];
-                                        call.extend(eargs);
-                                        return macroexpand_all_recur(i, &Value::list(call));
+                                        let call = if let Some(eargs) = &eargs {
+                                            let mut call = vec![fv.clone()];
+                                            call.extend(eargs.iter().cloned());
+                                            Value::list(call)
+                                        } else {
+                                            Value::cons(fv.clone(), expanded_args.clone())
+                                        };
+                                        return macroexpand_all_recur(i, &call);
                                     }
                                 }
                                 None => {
@@ -2325,10 +2343,12 @@ fn macroexpand_all_expanded(
                                             sym::LAMBDA,
                                         );
                                         if is_lam {
-                                            if let Some(unfolded) =
-                                                unfold_funcall_lambda(i, &fv, &eargs)?
-                                            {
-                                                return Ok(unfolded);
+                                            if let Some(eargs) = &eargs {
+                                                if let Some(unfolded) =
+                                                    unfold_funcall_lambda(i, &fv, eargs)?
+                                                {
+                                                    return Ok(unfolded);
+                                                }
                                             }
                                             // GNU retains the call after
                                             // expanding its function and
@@ -2338,15 +2358,23 @@ fn macroexpand_all_expanded(
                                                 i,
                                                 &expanded,
                                                 vec![items[0].clone(), eexp],
-                                                Value::list(eargs),
+                                                expanded_args,
                                             );
                                         }
                                     }
                                 }
                             }
                         }
+                        if dotted_outer {
+                            return macroexpand_prepend_preserving(
+                                i,
+                                &expanded,
+                                vec![items[0].clone(), eexp],
+                                expanded_args,
+                            );
+                        }
                         let mut out = vec![items[0].clone(), eexp];
-                        out.extend(eargs);
+                        out.extend(eargs.unwrap_or_default());
                         return Ok(Value::list(out));
                     }
                     sym::CONDITION_CASE if items.len() == 3 => {
