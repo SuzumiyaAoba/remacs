@@ -1764,6 +1764,11 @@ fn macroexpand_all_expanded(
             // is only discarded here, which also pollutes the
             // REMACS_BT_ERR log.)
             let Some(items) = macroexpand_list_to_vec(i, &expanded)? else {
+                if i.sym_is(&car, sym::DEFUN) || i.sym_is(&car, sym::DEFMACRO) {
+                    if let Some(tail) = macroexpand_dotted_tail(i, &expanded)? {
+                        return Err(i.wrong_type_mut("listp", &tail));
+                    }
+                }
                 if matches!(&car, Value::Cons(_)) {
                     if let Some(result) =
                         macroexpand_direct_lambda_call(i, &expanded, &car)?

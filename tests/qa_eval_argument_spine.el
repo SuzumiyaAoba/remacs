@@ -265,6 +265,21 @@
        '(condition-case nil nil
           (error (qa-eval-dotted-handler-macro) . tail))))
     '(condition-case nil nil (error nil . tail)))
+(qa (progn
+      (if (fboundp 'macroexpand-all) nil (require 'macroexp))
+      (fset 'qa-eval-dotted-defun-macro (cons 'macro 'ignore))
+      (list (condition-case err
+                (macroexpand-all
+                 '(defun qa-eval-dotted-f nil
+                    (qa-eval-dotted-defun-macro) . tail))
+              (error err))
+            (condition-case err
+                (macroexpand-all
+                 '(defmacro qa-eval-dotted-m nil
+                    (qa-eval-dotted-defun-macro) . tail))
+              (error err))))
+    '((wrong-type-argument listp tail)
+      (wrong-type-argument listp tail)))
 
 ;; Circular malformed let specs signal promptly and retain the original
 ;; cyclic spec as one error datum instead of flattening it forever.
