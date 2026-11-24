@@ -291,6 +291,16 @@
                 (qa-eval-dotted-let-macro) . tail))))
     '((let ((qa-eval-dotted-let-x nil)) nil . tail)
       (let* ((qa-eval-dotted-let-x nil)) nil . tail)))
+(qa (progn
+      (if (fboundp 'macroexpand-all) nil (require 'macroexp))
+      (fset 'qa-eval-dotted-condition-var-macro (cons 'macro 'ignore))
+      (macroexpand-all
+       '(condition-case (qa-eval-dotted-condition-var-macro)
+          nil
+          (error (qa-eval-dotted-condition-var-macro))
+          . tail)))
+    '(condition-case (qa-eval-dotted-condition-var-macro)
+       nil (error nil) . tail))
 
 ;; Circular malformed let specs signal promptly and retain the original
 ;; cyclic spec as one error datum instead of flattening it forever.

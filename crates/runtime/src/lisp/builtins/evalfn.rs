@@ -1797,14 +1797,15 @@ fn macroexpand_all_expanded(
             let items = if let Some(items) = macroexpand_list_to_vec(i, &expanded)? {
                 items
             } else {
-                let dotted_let_items = if i.sym_is(&car, sym::LET)
+                let dotted_special_items = if i.sym_is(&car, sym::LET)
                     || i.sym_is(&car, sym::LET_STAR)
+                    || i.sym_is(&car, sym::CONDITION_CASE)
                 {
                     macroexpand_improper_prefix_to_vec(i, &expanded)?
                 } else {
                     None
                 };
-                if let Some((items, _tail)) = dotted_let_items {
+                if let Some((items, _tail)) = dotted_special_items {
                     items
                 } else {
                     if i.sym_is(&car, sym::DEFUN) || i.sym_is(&car, sym::DEFMACRO) {
