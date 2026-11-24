@@ -2316,21 +2316,29 @@ fn macroexpand_all_expanded(
                                     return expand_body_filtered(i, env_id, &env, sm, &bound, form);
                                 }
                                 if matches!(form, Value::Cons(_)) {
-                                    if let Some(parts) = macroexpand_list_to_vec(i, form)? {
-                                        if !parts.is_empty() {
-                                            let tail = macroexpand_list_tail(i, form, 1)?;
-                                            let tail = macroexpand_live_spine(i, &tail, |i, form| {
-                                                expand_body_filtered(
-                                                    i, env_id, &env, sm, &bound, form,
-                                                )
-                                            })?;
-                                            return macroexpand_prepend_preserving(
-                                                i,
-                                                form,
-                                                vec![parts[0].clone()],
-                                                tail,
-                                            );
+                                    let head = match macroexpand_list_to_vec(i, form)? {
+                                        Some(parts) => parts.into_iter().next(),
+                                        None if macroexpand_dotted_tail(i, form)?.is_some() => {
+                                            let Value::Cons(cell) = form else {
+                                                unreachable!()
+                                            };
+                                            Some(crate::lisp::eval::cons_parts(i, cell)?.0)
                                         }
+                                        None => None,
+                                    };
+                                    if let Some(head) = head {
+                                        let tail = macroexpand_list_tail(i, form, 1)?;
+                                        let tail = macroexpand_live_spine(i, &tail, |i, form| {
+                                            expand_body_filtered(
+                                                i, env_id, &env, sm, &bound, form,
+                                            )
+                                        })?;
+                                        return macroexpand_prepend_preserving(
+                                            i,
+                                            form,
+                                            vec![head],
+                                            tail,
+                                        );
                                     }
                                 }
                                 Ok(form.clone())

@@ -258,6 +258,13 @@
               qa-eval-macro-repair-count
               (eq (cdr target) target))))
     '(ok 2 nil))
+(qa (progn
+      (if (fboundp 'macroexpand-all) nil (require 'macroexp))
+      (fset 'qa-eval-dotted-handler-macro (cons 'macro 'ignore))
+      (macroexpand-all
+       '(condition-case nil nil
+          (error (qa-eval-dotted-handler-macro) . tail))))
+    '(condition-case nil nil (error nil . tail)))
 
 ;; Circular malformed let specs signal promptly and retain the original
 ;; cyclic spec as one error datum instead of flattening it forever.
